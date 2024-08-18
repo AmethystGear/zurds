@@ -1,4 +1,5 @@
 use phf::phf_map;
+use serde_json::Value;
 use std::collections::HashMap;
 use tokio::io::AsyncWriteExt;
 
@@ -9,15 +10,15 @@ pub const OK: HttpResponse = HttpResponse {
 };
 
 pub enum Body {
-    StaticBytes(&'static [u8]),
-    StaticString(&'static str),
+    Static(&'static [u8]),
+    Dynamic(Vec<u8>),
 }
 
 impl Body {
     fn len(&self) -> usize {
         match &self {
-            Body::StaticBytes(b) => b.len(),
-            Body::StaticString(s) => s.bytes().len(),
+            Body::Static(b) => b.len(),
+            Body::Dynamic(b) => b.len(),
         }
     }
 }
@@ -48,6 +49,16 @@ impl HttpResponse {
             code,
             headers,
             body,
+        }
+    }
+
+    pub fn json(code: u16, body: Value) -> Self {
+        Self {
+            code,
+            headers: Some(Headers::Static(
+                phf_map!("Content-Type" => "application/json"),
+            )),
+            body: Some(Body::Dynamic(body.to_string().into_bytes())),
         }
     }
 }
@@ -87,8 +98,8 @@ pub async fn write_http_response(
     bytes.extend_from_slice(b"\r\n");
     if let Some(body) = &response.body {
         bytes.extend_from_slice(match body {
-            Body::StaticBytes(bytes) => bytes,
-            Body::StaticString(str) => str.as_bytes()
+            Body::Static(bytes) => bytes,
+            Body::Dynamic(bytes) => bytes.as_slice(),
         });
     }
     stream.write_all(&bytes).await

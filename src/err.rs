@@ -6,7 +6,7 @@ macro_rules! http_err {
             HttpResponse {
                 code: $x,
                 headers: Some(Headers::Static(phf_map!("Content-Type" => "text/html"))),
-                body: Some(Body::StaticString(include_str!(concat!("../res/", stringify!($x), ".html")))),
+                body: Some(Body::Static(include_bytes!(concat!("../res/", stringify!($x), ".html")))),
             }
         }
     };

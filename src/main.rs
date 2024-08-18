@@ -1,25 +1,23 @@
-use std::{collections::HashMap};
+use std::collections::HashMap;
 
 use err::http_err;
-use id::{PairId, PlayerId};
+use id::{PlayerId, Token};
 use itertools::Itertools;
 use messenger::{Message, Messenger};
 use phf::phf_map;
-use players::{ConnectingState, Pair, PlayerData, PlayerInfo, PlayerState};
-use playerstate::Table;
+use playerstate::{ArcMutex, Players, Table};
 use request::{parse_http_request, HttpRequest, HttpRequestParsingError};
 use response::{write_http_response, Body, Headers, HttpResponse};
-use serde::Deserialize;
+use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::json;
-use tokio::sync::mpsc::{self, error::TrySendError, Sender};
+use tokio::net::{TcpListener, TcpStream};
 
 mod err;
 mod id;
 mod messenger;
-mod players;
+mod playerstate;
 mod request;
 mod response;
-mod playerstate;
 
 const INDEX: &str = "/index.html";
 const RESOURCES: phf::Map<&'static str, &'static [u8]> = incdir::include_dir!("res");
@@ -27,24 +25,24 @@ const RESOURCES: phf::Map<&'static str, &'static [u8]> = incdir::include_dir!("r
 #[tokio::main]
 async fn main() -> Result<(), tokio::io::Error> {
     println!("starting server on http://localhost:7878");
-    let table = Table::new();
-    let listener = tokio::net::TcpListener::bind("localhost:7878").await?;
+    let table = ArcMutex::new(Table::new());
+    let listener = TcpListener::bind("localhost:7878").await?;
     loop {
+        let table = table.clone();
         let (stream, _) = listener.accept().await?;
-        let mut table = table.clone();
-        tokio::spawn(async move { handle_connection(stream, &mut table).await });
+        tokio::spawn(async move { handle_connection(stream, table).await });
     }
 }
 
 async fn handle_connection(
-    mut stream: tokio::net::TcpStream,
-    table: &mut Table,
+    mut stream: TcpStream,
+    table: ArcMutex<Table>,
 ) -> Result<(), tokio::io::Error> {
     loop {
+        let table = table.clone();
         let mut buf_reader = tokio::io::BufReader::new(&mut stream);
         let request = parse_http_request(&mut buf_reader).await;
-        let mut pid: Option<PlayerId> = None;
-        let response = match request {
+        match request {
             Ok(request) => {
                 // always route "/" to the index file
                 let path = if request.path == "/" {
@@ -54,53 +52,26 @@ async fn handle_connection(
                 };
                 let mut split = path.split('/').filter(|elem| elem != &"").collect_vec();
                 split.insert(0, &request.method);
-                let response = match split[..] {
-                    ["GET", "join", player_name] => {
-                        return join(table, stream, player_name).await;
+                match &split[..] {
+                    ["GET", "player"] => {
+                        return player(table, stream).await;
                     }
-                    ["GET", ..] => get(&path[1..], split),
-                    ["POST", function] => {
-                        (|| {
-                            let body: serde_json::Value = expect_json_body(&request)?;
-                            match body.get("player_id").clone() {
-                                Some(serde_json::Value::String(player_id)) => {
-                                    pid = Some(player_id.clone().into());
-                                    match function {
-
-                                        _ => Err(http_err!(404))
-                                    }
-                                }
-                                _ => Err(http_err!(400))
-                            }
-                        })()
-                    }
-                    _ => Err(http_err!(404)), // catch all 404
+                    ["GET", path @ ..] => get(path, &mut stream).await?,
+                    ["POST", path @ ..] => post(table, path, &request, &mut stream).await?,
+                    _ => write_http_response(&http_err!(404), &mut stream).await?, // catch all 404
                 };
-                match response {
-                    Ok(response) => response,
-                    Err(response) => response,
-                }
             }
             // error while reading from TcpStream
             Err(HttpRequestParsingError::Io(err)) => return Err(err),
             // couldn't parse the request
-            Err(_) => http_err!(400),
+            Err(_) => write_http_response(&http_err!(400), &mut stream).await?,
         };
-        match write_http_response(&response, &mut stream).await {
-            Err(e) => {
-                if let Some(player_id) = pid {
-                    table.delete_player(&player_id);
-                }
-                return Err(e);
-            }
-            _ => {}
-        }
     }
 }
 
 /// sends SSE response + sends player id on SSE stream.
-/// returns messenger through which we can send more messages to that player
-async fn init_sse(mut stream : tokio::net::TcpStream, player_id: &PlayerId) -> Result<Messenger, tokio::io::Error> {
+async fn player(table: ArcMutex<Table>, mut stream: TcpStream) -> Result<(), tokio::io::Error> {
+    let player_id = PlayerId::new();
     const SSE_HEADERS: phf::Map<&str, &str> = phf_map!(
         "Content-Type" => "text/event-stream",
         "Cache-Control" => "no-cache",
@@ -108,80 +79,58 @@ async fn init_sse(mut stream : tokio::net::TcpStream, player_id: &PlayerId) -> R
     );
     let response = HttpResponse::new(200, Some(Headers::Static(SSE_HEADERS)), None);
     write_http_response(&response, &mut stream).await?;
-    let messenger = Messenger::new(stream);
-    messenger
+    let messenger = Messenger::new(table.clone(), player_id.clone(), stream);
+    match messenger
         .send(Message::new("player_id", json!(player_id)))
-        .await?;
-    Ok(messenger)
-}
-
-/// reserves a specific player name and sets up an SSE event stream on the provided `TcpStream`,
-/// and sends the player it's id via that SSE stream.
-async fn join(
-    table: &mut Table,
-    mut stream: tokio::net::TcpStream,
-    player_name: &str,
-) -> Result<(), tokio::io::Error> {
-    let name_reserved = {
-        let name_to_id = table.name_to_id.read();
-        let mut reservations = table.temp_reservations.write();
-        if name_to_id.contains_left(player_name) || reservations.contains(player_name) {
-            true
-        } else {
-            // temporarily reserving the name so that parallel requests don't cause us to 
-            // overwrite player info in the table.
-            reservations.insert(player_name.into());
-            false
-        }
-    };
-    if name_reserved {
-        return write_http_response(&http_err!(400), &mut stream).await;
-    }
-    let player_id = PlayerId::new();
-    let messenger = init_sse(stream, &player_id).await;
+        .await
     {
-        let mut name_to_id = table.name_to_id.write();
-        let mut messengers = table.player_id_to_messenger.write();
-        let mut reservations = table.temp_reservations.write();
-        reservations.remove(player_name);
-        let messenger = messenger?;
-        messengers.insert(player_id.clone(), messenger);
-        name_to_id.insert(player_name.into(), player_id);
+        Ok(Ok(e)) => e?,
+        _ => return Ok(()),
+    }
+    {
+        let mut table = table.lock();
+        table.messengers.insert(player_id.clone(), messenger);
     }
     Ok(())
 }
 
 // simple get for getting files from `RESOURCES`
-fn get(path: &str, split: Vec<&str>) -> Result<HttpResponse, HttpResponse> {
-    match RESOURCES.get(path) {
+async fn get(path: &[&str], stream: &mut TcpStream) -> Result<(), tokio::io::Error> {
+    let response = match RESOURCES.get(&path.join("/")) {
         Some(response) => {
             let mut headers = HashMap::new();
-            let content_type = match split[split.len() - 1].split('.').collect_vec()[..] {
-                [_, "html"] => Ok("text/html"),
-                [_, "css"] => Ok("text/css"),
-                [_, "txt"] => Ok("text/plain"),
-                [_, "js"] => Ok("text/javascript"),
-                [_, "json"] => Ok("application/json"),
-                [_, "jpg" | "jpeg"] => Ok("image/jpeg"),
-                [_, "png"] => Ok("image/png"),
-                [_, "webp"] => Ok("image/webp"),
+            let content_type = match path
+                .last()
+                .map(|x| x.split('.').last())
+                .flatten()
+                .expect(&format!("bug: bad filename: {:?}", path))
+            {
+                "html" => Ok("text/html"),
+                "css" => Ok("text/css"),
+                "txt" => Ok("text/plain"),
+                "js" => Ok("text/javascript"),
+                "json" => Ok("application/json"),
+                "jpg" | "jpeg" => Ok("image/jpeg"),
+                "png" => Ok("image/png"),
+                "webp" => Ok("image/webp"),
                 _ => Err(()),
             };
 
             match content_type {
                 Ok(content_type) => {
                     headers.insert("Content-Type", content_type.into());
-                    Ok(HttpResponse {
+                    HttpResponse {
                         code: 200,
                         headers: Some(Headers::Dynamic(headers)),
-                        body: Some(Body::StaticBytes(response)),
-                    })
+                        body: Some(Body::Static(response)),
+                    }
                 }
-                Err(_) => Err(http_err!(404)),
+                Err(_) => http_err!(404),
             }
         }
-        None => Err(http_err!(404)),
-    }
+        None => http_err!(404),
+    };
+    write_http_response(&response, stream).await
 }
 
 /// expect json body, or return err 400
@@ -193,5 +142,146 @@ fn expect_json_body<'a, T: Deserialize<'a>>(request: &'a HttpRequest) -> Result<
     match body {
         Some(Ok(Ok(body))) => Ok(body),
         _ => Err(http_err!(400)),
+    }
+}
+
+fn parse_body<'a, T: DeserializeOwned>(body: serde_json::Value) -> Result<T, HttpResponse> {
+    match serde_json::from_value(body) {
+        Ok(body) => Ok(body),
+        _ => Err(http_err!(400)),
+    }
+}
+
+fn vend(table: ArcMutex<Table>, body: serde_json::Value) -> Result<HttpResponse, HttpResponse> {
+    #[derive(Deserialize)]
+    struct Vend {
+        player_id: PlayerId,
+    }
+    let body: Vend = parse_body(body)?;
+    let mut table = table.lock();
+    if table.messengers.get(&body.player_id).is_none() {
+        Err(http_err!(404))?
+    }
+    if let Some(token) = table.player_to_token.get(&body.player_id).cloned() {
+        table.token_to_players.remove(&token);
+    }
+    let token = Token::new();
+    table
+        .player_to_token
+        .insert(body.player_id.clone(), token.clone());
+    table
+        .token_to_players
+        .insert(token.clone(), Players::Single(body.player_id));
+    Ok(HttpResponse::json(200, json!({"token" : token})))
+}
+
+fn accept(table: ArcMutex<Table>, body: serde_json::Value) -> Result<HttpResponse, HttpResponse> {
+    #[derive(Deserialize)]
+    struct Accept {
+        player_id: PlayerId,
+        token: Token,
+    }
+    let body: Accept = parse_body(body)?;
+    let mut table = table.lock();
+    if table.messengers.get(&body.player_id).is_none() {
+        Err(http_err!(404))?
+    }
+    if let Some(Players::Single(challenger)) = table.token_to_players.remove(&body.token) {
+        table
+            .player_to_token
+            .insert(body.player_id.clone(), body.token.clone());
+        table
+            .token_to_players
+            .insert(body.token, Players::Pair(challenger, body.player_id));
+        Ok(HttpResponse::json(200, json!({})))
+    } else {
+        Err(HttpResponse::json(400, json!({"err" : "invalid token"})))
+    }
+}
+
+fn reduce<T>(res: Result<T, T>) -> T {
+    match res {
+        Ok(t) => t,
+        Err(t) => t,
+    }
+}
+
+async fn msg(
+    table: ArcMutex<Table>,
+    body: serde_json::Value,
+    stream: &mut TcpStream,
+) -> Result<(), std::io::Error> {
+    #[derive(Deserialize)]
+    struct Msg {
+        player_id: PlayerId,
+        title: String,
+        content: serde_json::Value,
+    }
+    let response = (|| {
+        let body: Msg = parse_body(body)?;
+        let table = table.lock();
+        if table.messengers.get(&body.player_id).is_none() {
+            Err(HttpResponse::json(400, json!({"err" : "invalid player id"})))?
+        }
+        let messenger = match table
+            .player_to_token
+            .get(&body.player_id)
+            .map(|token| table.token_to_players.get(token))
+        {
+            Some(Some(Players::Pair(challenger, acceptor))) => if acceptor == &body.player_id {
+                table.messengers.get(&challenger)
+            } else {
+                table.messengers.get(&acceptor)
+            }
+            .cloned()
+            .expect("table in invalid state: token_to_players map contains an invalid player id."),
+            _ => Err(HttpResponse::json(500, json!({"err" : "invalid token, or "})))?,
+        };
+        Ok((body, messenger))
+    })();
+    write_http_response(
+        &match response {
+            Err(e) => e,
+            Ok((body, messenger)) => {
+                let send = messenger
+                    .send(Message::new(&body.title, body.content))
+                    .await;
+                if let Ok(Ok(Ok(_))) = send {
+                    HttpResponse::json(200, json!({}))
+                } else {
+                    HttpResponse::json(500, json!({"err" : "failed to send message to opponent"}))
+                }
+            }
+        },
+        stream,
+    )
+    .await
+}
+
+async fn respond(
+    table: ArcMutex<Table>,
+    body: serde_json::Value,
+    stream: &mut TcpStream,
+    response_fn: fn(ArcMutex<Table>, serde_json::Value) -> Result<HttpResponse, HttpResponse>,
+) -> Result<(), std::io::Error> {
+    let response = reduce(response_fn(table, body));
+    write_http_response(&response, stream).await
+}
+
+async fn post(
+    table: ArcMutex<Table>,
+    path: &[&str],
+    request: &HttpRequest,
+    stream: &mut TcpStream,
+) -> Result<(), tokio::io::Error> {
+    let body = expect_json_body(request);
+    match body {
+        Ok(body) => match path {
+            ["vend"] => respond(table, body, stream, vend).await,
+            ["accept"] => respond(table, body, stream, accept).await,
+            ["msg"] => msg(table, body, stream).await,
+            _ => write_http_response(&http_err!(404), stream).await,
+        },
+        Err(e) => write_http_response(&e, stream).await,
     }
 }
