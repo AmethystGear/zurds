@@ -64,7 +64,7 @@ async fn handle_connection(
             // error while reading from TcpStream
             Err(HttpRequestParsingError::Io(err)) => return Err(err),
             // couldn't parse the request
-            Err(_) => write_http_response(&http_err!(400), &mut stream).await?,
+            Err(HttpRequestParsingError::InvalidRequestFormat) => write_http_response(&http_err!(400), &mut stream).await?,
         };
     }
 }
