@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use err::http_err;
 use id::{PlayerId, Token};
-use itertools::Itertools;
 use messenger::{Message, Messenger};
 use phf::phf_map;
 use playerstate::{ArcMutex, Players, Table};
@@ -24,6 +23,13 @@ const RESOURCES: phf::Map<&'static str, &'static [u8]> = incdir::include_dir!("r
 
 #[tokio::main]
 async fn main() -> Result<(), tokio::io::Error> {
+    // propogate panics in tokio tasks so that whole application crashes if we get panics anywhere.
+    let default_panic = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        default_panic(info);
+        std::process::exit(1);
+    }));
+
     println!("starting server on http://localhost:7878");
     let table = ArcMutex::new(Table::new());
     let listener = TcpListener::bind("localhost:7878").await?;
@@ -50,7 +56,7 @@ async fn handle_connection(
                 } else {
                     &request.path
                 };
-                let mut split = path.split('/').filter(|elem| elem != &"").collect_vec();
+                let mut split: Vec<_> = path.split('/').filter(|elem| elem != &"").collect();
                 split.insert(0, &request.method);
                 match &split[..] {
                     ["GET", "player"] => {
@@ -64,13 +70,16 @@ async fn handle_connection(
             // error while reading from TcpStream
             Err(HttpRequestParsingError::Io(err)) => return Err(err),
             // couldn't parse the request
-            Err(HttpRequestParsingError::InvalidRequestFormat) => write_http_response(&http_err!(400), &mut stream).await?,
+            Err(HttpRequestParsingError::InvalidRequestFormat) => {
+                write_http_response(&http_err!(400), &mut stream).await?
+            }
         };
     }
 }
 
 /// sends SSE response + sends player id on SSE stream.
 async fn player(table: ArcMutex<Table>, mut stream: TcpStream) -> Result<(), tokio::io::Error> {
+    println!("here!");
     let player_id = PlayerId::new();
     const SSE_HEADERS: phf::Map<&str, &str> = phf_map!(
         "Content-Type" => "text/event-stream",
@@ -141,14 +150,20 @@ fn expect_json_body<'a, T: Deserialize<'a>>(request: &'a HttpRequest) -> Result<
         .map(|body| std::str::from_utf8(body).map(|body| serde_json::from_str(body)));
     match body {
         Some(Ok(Ok(body))) => Ok(body),
-        _ => Err(http_err!(400)),
+        _ => Err(HttpResponse::json(
+            400,
+            json!({"err" : "invalid request: body is not valid json"}),
+        )),
     }
 }
 
 fn parse_body<'a, T: DeserializeOwned>(body: serde_json::Value) -> Result<T, HttpResponse> {
     match serde_json::from_value(body) {
         Ok(body) => Ok(body),
-        _ => Err(http_err!(400)),
+        _ => Err(HttpResponse::json(
+            400,
+            json!({"err" : "invalid request: request does not match expected fields"}),
+        )),
     }
 }
 
@@ -160,7 +175,10 @@ fn vend(table: ArcMutex<Table>, body: serde_json::Value) -> Result<HttpResponse,
     let body: Vend = parse_body(body)?;
     let mut table = table.lock();
     if table.messengers.get(&body.player_id).is_none() {
-        Err(http_err!(404))?
+        Err(HttpResponse::json(
+            400,
+            json!({"err" : "provided player id is invalid"}),
+        ))?
     }
     if let Some(token) = table.player_to_token.get(&body.player_id).cloned() {
         table.token_to_players.remove(&token);
@@ -184,18 +202,31 @@ fn accept(table: ArcMutex<Table>, body: serde_json::Value) -> Result<HttpRespons
     let body: Accept = parse_body(body)?;
     let mut table = table.lock();
     if table.messengers.get(&body.player_id).is_none() {
-        Err(http_err!(404))?
+        Err(HttpResponse::json(
+            400,
+            json!({"err" : "provided player id is invalid"}),
+        ))?
     }
-    if let Some(Players::Single(challenger)) = table.token_to_players.remove(&body.token) {
-        table
-            .player_to_token
-            .insert(body.player_id.clone(), body.token.clone());
-        table
-            .token_to_players
-            .insert(body.token, Players::Pair(challenger, body.player_id));
-        Ok(HttpResponse::json(200, json!({})))
+    if let Some(Players::Single(challenger)) = table.token_to_players.get(&body.token).cloned() {
+        if challenger != body.player_id {
+            table
+                .player_to_token
+                .insert(body.player_id.clone(), body.token.clone());
+            table
+                .token_to_players
+                .insert(body.token, Players::Pair(challenger, body.player_id));
+            Ok(HttpResponse::json(200, json!({})))
+        } else {
+            Err(HttpResponse::json(
+                400,
+                json!({"err" : "you can't fight yourself"}),
+            ))
+        }
     } else {
-        Err(HttpResponse::json(400, json!({"err" : "invalid token"})))
+        Err(HttpResponse::json(
+            400,
+            json!({"err" : "either the token is invalid, the opponent has disconnected, or the opponent has joined a different game"}),
+        ))
     }
 }
 
@@ -221,7 +252,10 @@ async fn msg(
         let body: Msg = parse_body(body)?;
         let table = table.lock();
         if table.messengers.get(&body.player_id).is_none() {
-            Err(HttpResponse::json(400, json!({"err" : "invalid player id"})))?
+            Err(HttpResponse::json(
+                400,
+                json!({"err" : "invalid player id"}),
+            ))?
         }
         let messenger = match table
             .player_to_token
@@ -235,7 +269,10 @@ async fn msg(
             }
             .cloned()
             .expect("table in invalid state: token_to_players map contains an invalid player id."),
-            _ => Err(HttpResponse::json(500, json!({"err" : "invalid token, or "})))?,
+            _ => Err(HttpResponse::json(
+                400,
+                json!({"err" : "player is not paired to anyone"}),
+            ))?,
         };
         Ok((body, messenger))
     })();
@@ -249,7 +286,7 @@ async fn msg(
                 if let Ok(Ok(Ok(_))) = send {
                     HttpResponse::json(200, json!({}))
                 } else {
-                    HttpResponse::json(500, json!({"err" : "failed to send message to opponent"}))
+                    HttpResponse::json(400, json!({"err" : "failed to send message to opponent"}))
                 }
             }
         },

@@ -6,6 +6,7 @@ use std::{
     collections::HashMap, sync::{Arc, Mutex, MutexGuard},
 };
 
+#[derive(Clone)]
 pub enum Players {
     Single(PlayerId),
     Pair(PlayerId, PlayerId)

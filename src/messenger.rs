@@ -1,15 +1,15 @@
+use std::time::Duration;
+
+use rand::{thread_rng, Rng};
 use tokio::{
     io::{self, AsyncWriteExt},
-    sync::{
-        mpsc,
-        oneshot,
-    },
+    sync::{mpsc, oneshot},
     time::timeout,
 };
 
 use crate::{
     id::PlayerId,
-    playerstate::{ArcMutex, Table},
+    playerstate::{ArcMutex, Players, Table},
 };
 
 /// Wrapper around a `TcpStream` that relays messages to the `TcpStream` via channels.
@@ -46,35 +46,59 @@ fn message_loop(
     mut stream: tokio::net::TcpStream,
     mut rx: mpsc::UnboundedReceiver<(Message, oneshot::Sender<Result<(), io::Error>>)>,
 ) {
+    const MIN_TIMEOUT: u64 = 15;
+    const MAX_TIMEOUT: u64 = 30;
     tokio::spawn(async move {
         let mut id = 0;
         loop {
-            let duration = tokio::time::Duration::from_secs(60);
-            if let Some((message, tx)) = timeout(duration, rx.recv())
-                .await
-                .expect("bug: mpsc sender closed")
-            {
-                // convert the message to SSE format
-                let content = format!(
-                    "id: {}\nevent: {}\ndata: {}\n\n",
-                    id,
-                    message.title,
-                    message.content.to_string()
-                );
-                tx.send(stream.write_all(content.as_bytes()).await)
-                    .expect("bug: oneshot reciever closed");
-            } else {
-                // timed out, let's ping the player to see if they're still alive...
-                let content = format!("id: {}\nevent: ping\ndata: \n\n", id);
-                if let Err(_) = stream.write_all(content.as_bytes()).await {
-                    // we couldn't ping the player, so let's get rid of their data from the table.
-                    let mut table = table.lock();
-                    table.messengers.remove(&player_id);
-                    if let Some(token) = table.player_to_token.remove(&player_id) {
-                        table.token_to_players.remove(&token);
-                    }
-                    break;
+            // randomized timeout, this should lower contention by spreading out
+            // when we (may) need to ping the player and/or take the table lock.
+            let duration = Duration::from_secs(thread_rng().gen_range(MIN_TIMEOUT..=MAX_TIMEOUT));
+            let (content, tx) = match timeout(duration, rx.recv()).await {
+                Ok(Some((message, tx))) => {
+                    // convert the message to SSE format
+                    (
+                        format!(
+                            "id: {}\nevent: {}\ndata: {}\n\n",
+                            id,
+                            message.title,
+                            message.content.to_string()
+                        ),
+                        Some(tx),
+                    )
                 }
+                Ok(None) => panic!("mpsc sender closed"),
+                Err(_) => {
+                    // timed out, which means there's nothing we need to send the player right now.
+                    // let's ping the player to see if they're still alive...
+                    (format!("id: {}\nevent: ping\ndata: {{}}\n\n", id), None)
+                }
+            };
+            let border = "_________________________________________";
+            println!(
+                "{border}\nsending\n{}to player: {}\n{border}",
+                content, player_id
+            );
+            let res = stream.write_all(content.as_bytes()).await;
+            let err = res.is_err();
+            if let Some(tx) = tx {
+                tx.send(res).expect("oneshot reciever closed");
+            }
+            if err {
+                // we couldn't send to the player, so let's get rid of their data from the table.
+                println!("deleting player: {}", player_id);
+                let mut table = table.lock();
+                table.messengers.remove(&player_id);
+                if let Some(token) = table.player_to_token.remove(&player_id) {
+                    if let Some(Players::Pair(a, b)) = table.token_to_players.remove(&token) {
+                        if a == player_id {
+                            table.player_to_token.remove(&b);
+                        } else {
+                            table.player_to_token.remove(&a);
+                        }
+                    }
+                }
+                break;
             }
             id += 1;
         }

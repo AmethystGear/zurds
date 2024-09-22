@@ -1,87 +1,77 @@
+const evt_source = new EventSource('/player')
+evt_source.addEventListener('ping', function(event) {
+    console.log('server ping')
+})
 
+let player_id
+evt_source.addEventListener('player_id', function(event) {
+    player_id = JSON.parse(event.data)
+    console.log('set player id to:', player_id)
+})
 
+evt_source.addEventListener('msg', function(event) {
 
-let handleError = e => alert('Error occurred: ' + e.error.message)
-window.addEventListener('error', handleError)
-window.addEventListener('unhandledrejection', handleError)
+})
 
-/*
-let uuid
-let dataChannel
-let serverConnection
-let peerConn
-async function pageReady() {
+// Function to call the /vend API and display the token
+async function vend() {
+    if (!player_id) {
+        console.error('Player ID not available')
+        return
+    }
     
+    try {
+        const response = await fetch('/vend', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ player_id })
+        })
 
-
-
-    serverConnection = new WebSocket(`ws://${window.location.hostname}:8443`)
-    console.log(uuid)
-    serverConnection.onmessage = function (message) {
-        if (!peerConn) {
-            peerConn = new RTCPeerConnection(RTC_CONFIG)
-            peerConn.onicecandidate = function (event) {
-                if (event.candidate != null) {
-                    serverConnection.send(JSON.stringify({ 'ice': event.candidate, 'uuid': uuid }))
-                }
-            }
-            peerConn.ondatachannel = function(event) {
-                dataChannel = event.channel
-                dataChannel.onmessage = function(event) {
-                    console.log(event)
-                }
-            }
-        }
-        const signal = JSON.parse(message.data)
-        if (signal.uuid == uuid) {
+        if (!response.ok) {
+            console.error('Vend failed')
             return
         }
-        console.log('recieved message')
-        console.log(message)
-        if (signal.sdp) {
-            console.log('setting remote description')
-            peerConn.setRemoteDescription(new RTCSessionDescription(signal.sdp)).then(() => {
-                // Only create answers in response to offers
-                if (signal.sdp.type !== 'offer') return;
-                console.log('answering....')
-                peerConn.createAnswer().then(description => peerConn.setLocalDescription(description).then(() => {
-                    serverConnection.send(JSON.stringify({ 'sdp': peerConn.localDescription, 'uuid': uuid }))
-                }).catch(handleError)).catch(handleError)
-            }).catch(handleError)
-        } else if (signal.ice) {
-            peerConn.addIceCandidate(new RTCIceCandidate(signal.ice)).catch(handleError)
+
+        const data = await response.json()
+        const token = data.token // Assuming the token is in the response JSON as { token: '...' }
+
+        // Display the returned token in the page
+        document.getElementById('vendToken').textContent = token
+        console.log('Vend successful, token:', token)
+    } catch (error) {
+        console.error('Error during vend:', error)
+    }
+}
+
+// Function to call the /accept API
+async function accept() {
+    const token = document.getElementById('tokenInput').value
+    if (!player_id || !token) {
+        console.error('Player ID or token not available')
+        return
+    }
+    
+    try {
+        const response = await fetch('/accept', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ player_id, token })
+        })
+
+        if (!response.ok) {
+            console.error('Accept failed')
+        } else {
+            console.log('Accept successful')
         }
-        peerConn.onconnectionstatechange = event => console.log(event)
+    } catch (error) {
+        console.error('Error during accept:', error)
     }
 }
 
-// Taken from http://stackoverflow.com/a/105074/515584
-// Strictly speaking, it's not a real UUID, but it gets the job done here
-function createUUID() {
-    function s4() {
-        return Math.floor((1 + Math.random()) * 0x10000).toString(16).substring(1);
-    }
-
-    return `${s4() + s4()}-${s4()}-${s4()}-${s4()}-${s4() + s4() + s4()}`;
-}
-
-function handleError(e) {
-    console.log(e)
-}
-
-function start() {
-    peerConn = new RTCPeerConnection(RTC_CONFIG)
-    dataChannel = peerConn.createDataChannel('data')
-    dataChannel.onmessage = function(event) {
-        console.log(event)
-    }
-    peerConn.onicecandidate = function (event) {
-        if (event.candidate != null) {
-            serverConnection.send(JSON.stringify({ 'ice': event.candidate, 'uuid': uuid }));
-        }
-    }
-    console.log('offering....')
-    peerConn.createOffer().then(description => peerConn.setLocalDescription(description).then(() => {
-        serverConnection.send(JSON.stringify({ 'sdp': peerConn.localDescription, 'uuid': uuid }))
-    }).catch(handleError)).catch(handleError)
-}*/
+// Attach event listeners to buttons
+document.getElementById('vendButton').addEventListener('click', vend)
+document.getElementById('acceptButton').addEventListener('click', accept)

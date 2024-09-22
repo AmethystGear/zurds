@@ -1,13 +1,12 @@
 use std::{fmt::Display, iter};
 
-use itertools::Itertools;
 use rand::Rng;
-use regex::Regex;
+//use regex::Regex;
 use serde::{Deserialize, Deserializer,Serialize};
 use std::sync::Arc;
 
 /// macro for making an `Id` type, basically a wrapper around Arc<str> with a constructor that generates a unique id.
-/// implements hash, eq, clone, debug, ord, serialize, and has a custom deserialize implementation to ensure that the id is valid.
+/// implements hash, eq, clone, debug, ord, serialize, and has a custom deserialize implementation to ensure that the string is a valid id.
 macro_rules! id {
     ( $x:ident ) => {
         #[derive(Hash, PartialEq, Eq, Clone, Debug, PartialOrd, Ord, Serialize)]
@@ -36,16 +35,15 @@ macro_rules! id {
             where
                 D: Deserializer<'de>,
             {
+                let id_name = camel_to_kebab(stringify!($x)) + "-";
                 let s: String = Deserialize::deserialize(deserializer)?;
-                let pattern = format!(r"^{}-\d{{4}}-\d{{4}}-\d{{4}}-\d{{4}}$", stringify!($x));
-                let re = Regex::new(&pattern).expect("invalid regex");
-                if re.is_match(&s) {
-                    Ok(s.into())
-                } else {
-                    Err(serde::de::Error::custom(format!("Invalid {}: '{}'", stringify!($x), s)))
+                let split = s[id_name.len()..].split('-').collect::<Vec<_>>();
+                if s.starts_with(&id_name) && split.len() == 4 && split.iter().all(|s| s.chars().all(|c| c.is_ascii_digit())) {
+                    return Ok(s.into())
                 }
+                Err(serde::de::Error::custom(format!("Invalid {}: '{}'", id_name, s)))
             }
-        }
+        }        
     };
 }
 
@@ -60,8 +58,7 @@ fn unique_id(id: &str) -> String {
             (0..4)
                 .map(|_| CHARS[rand::thread_rng().gen_range(0..CHARS.len())])
                 .collect::<String>()
-        }))
-        .join("-")
+        })).collect::<Vec<_>>().join("-")
 }
 
 // convert ascii camelCase string to ascii kebab-case string

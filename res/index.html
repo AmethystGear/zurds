@@ -3,15 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Player Name Input</title>
-    <link rel="stylesheet" href="styles.css">
+    <title>'Zurds</title>
 </head>
-<body>
-    <div class="container">
+    <body>
         <h1>'Zurds</h1>
-        <input type="text" id="player-name" placeholder="enter player name...">
-        <button id="find-random-match">Find Random Match</button>
-    </div>
-    <script src="script.js"></script>
-</body>
+
+        <!-- Button to call /vend API -->
+        <button id="vendButton">Vend</button>
+
+        <!-- Display token from /vend API -->
+        <div id="vendTokenDisplay" style="margin-top: 10px;">
+            <strong>Vend Token:</strong> <span id="vendToken"></span>
+        </div>
+
+        <!-- Textbox and button to call /accept API -->
+        <div style="margin-top: 20px;">
+            <label for="tokenInput">Enter Token: </label>
+            <input type="text" id="tokenInput">
+            <button id="acceptButton">Accept</button>
+        </div>
+        <script src="index.js"></script>
+    </body>
 </html>
