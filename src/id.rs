@@ -37,9 +37,11 @@ macro_rules! id {
             {
                 let id_name = camel_to_kebab(stringify!($x)) + "-";
                 let s: String = Deserialize::deserialize(deserializer)?;
-                let split = s[id_name.len()..].split('-').collect::<Vec<_>>();
-                if s.starts_with(&id_name) && split.len() == 4 && split.iter().all(|s| s.chars().all(|c| c.is_ascii_digit())) {
-                    return Ok(s.into())
+                if s.len() > id_name.len() {
+                    let split = s[id_name.len()..].split('-').collect::<Vec<_>>();
+                    if s.starts_with(&id_name) && split.len() == 4 && split.iter().all(|s| s.len() == 4 && s.chars().all(|c| c.is_ascii_digit())) {
+                        return Ok(s.into())
+                    }
                 }
                 Err(serde::de::Error::custom(format!("Invalid {}: '{}'", id_name, s)))
             }

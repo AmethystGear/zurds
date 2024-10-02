@@ -79,7 +79,6 @@ async fn handle_connection(
 
 /// sends SSE response + sends player id on SSE stream.
 async fn player(table: ArcMutex<Table>, mut stream: TcpStream) -> Result<(), tokio::io::Error> {
-    println!("here!");
     let player_id = PlayerId::new();
     const SSE_HEADERS: phf::Map<&str, &str> = phf_map!(
         "Content-Type" => "text/event-stream",
@@ -90,7 +89,7 @@ async fn player(table: ArcMutex<Table>, mut stream: TcpStream) -> Result<(), tok
     write_http_response(&response, &mut stream).await?;
     let messenger = Messenger::new(table.clone(), player_id.clone(), stream);
     match messenger
-        .send(Message::new("player_id", json!(player_id)))
+        .send(Message::new("playerId", json!(player_id)))
         .await
     {
         Ok(Ok(e)) => e?,
@@ -245,7 +244,6 @@ async fn msg(
     #[derive(Deserialize)]
     struct Msg {
         player_id: PlayerId,
-        title: String,
         content: serde_json::Value,
     }
     let response = (|| {
@@ -280,13 +278,14 @@ async fn msg(
         &match response {
             Err(e) => e,
             Ok((body, messenger)) => {
-                let send = messenger
-                    .send(Message::new(&body.title, body.content))
-                    .await;
-                if let Ok(Ok(Ok(_))) = send {
-                    HttpResponse::json(200, json!({}))
-                } else {
-                    HttpResponse::json(400, json!({"err" : "failed to send message to opponent"}))
+                let send = messenger.send(Message::new("msg", body.content)).await;
+
+                match send {
+                    Ok(Ok(Ok(_))) => HttpResponse::json(200, json!({})),
+                    err => HttpResponse::json(
+                        400,
+                        json!({"err" : format!("failed to send message to opponent {:?}", err)}),
+                    ),
                 }
             }
         },

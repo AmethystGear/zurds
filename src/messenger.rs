@@ -46,8 +46,8 @@ fn message_loop(
     mut stream: tokio::net::TcpStream,
     mut rx: mpsc::UnboundedReceiver<(Message, oneshot::Sender<Result<(), io::Error>>)>,
 ) {
-    const MIN_TIMEOUT: u64 = 15;
-    const MAX_TIMEOUT: u64 = 30;
+    const MIN_TIMEOUT: u64 = 30;
+    const MAX_TIMEOUT: u64 = 60;
     tokio::spawn(async move {
         let mut id = 0;
         loop {

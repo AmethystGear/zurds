@@ -1,77 +1,184 @@
-const evt_source = new EventSource('/player')
-evt_source.addEventListener('ping', function(event) {
-    console.log('server ping')
-})
+let playerId
+let peerConn
+let dataChannel
+let eventSource
+let recievedAllIceCandidates = false
+let sentAllIceCandidates = false
 
-let player_id
-evt_source.addEventListener('player_id', function(event) {
-    player_id = JSON.parse(event.data)
-    console.log('set player id to:', player_id)
-})
+const RTC_CONFIG = {
+    "iceServers": [
+        { "urls": "stun:stun.stunprotocol.org:3478" },
+        { "urls": "stun:stun.l.google.com:19302" }
+    ]
+}
 
-evt_source.addEventListener('msg', function(event) {
+function setupEventSource(onPlayerId) {
+    console.log('setting up event source')
+    eventSource = new EventSource('/player')
 
-})
+    eventSource.addEventListener('ping', () => console.log('server ping'))
 
-// Function to call the /vend API and display the token
+    eventSource.addEventListener('playerId', async function (event) {
+        playerId = JSON.parse(event.data)
+        console.log('set player id to:', playerId)
+        await onPlayerId()
+    })
+
+    eventSource.addEventListener('msg', async function (message) {
+        console.log('recieved message from server', message)
+        if (peerConn === undefined) {
+            peerConn = new RTCPeerConnection(RTC_CONFIG)
+            peerConn.onicecandidate = onIceCandidate
+            peerConn.ondatachannel = function (event) {
+                dataChannel = event.channel
+                dataChannel.onmessage = onMessage
+            }
+        }
+        let signal = JSON.parse(message.data)
+        if ('sdp' in signal) {
+            console.log('setting remote description')
+            peerConn.setRemoteDescription(new RTCSessionDescription(signal.sdp)).then(() => {
+                if (signal.sdp.type !== 'offer') {
+                    return
+                }
+                peerConn.createAnswer().then(description =>
+                    peerConn.setLocalDescription(description).then(sendLocalDescription).catch(handleError))
+                    .catch(handleError)
+            }).catch(handleError)
+        } else if ('ice' in signal) {
+            peerConn.addIceCandidate(new RTCIceCandidate(signal.ice)).catch(handleError)
+            if (signal.ice.candidate === '') {
+                recievedAllIceCandidates = true
+                if (sentAllIceCandidates) {
+                    closeEventSource()
+                }
+            }
+        }
+        peerConn.onconnectionstatechange = event => console.log(event)
+    })
+}
+
+function closeEventSource() {
+    console.log('closing event source')
+    eventSource.close()
+    eventSource = undefined
+}
+
 async function vend() {
-    if (!player_id) {
-        console.error('Player ID not available')
-        return
-    }
-    
-    try {
-        const response = await fetch('/vend', {
+    withPlayerId(async () => {
+        let response = await fetch('/vend', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ player_id })
+            body: JSON.stringify({ 'player_id': playerId })
         })
-
-        if (!response.ok) {
-            console.error('Vend failed')
-            return
-        }
-
-        const data = await response.json()
-        const token = data.token // Assuming the token is in the response JSON as { token: '...' }
-
-        // Display the returned token in the page
-        document.getElementById('vendToken').textContent = token
-        console.log('Vend successful, token:', token)
-    } catch (error) {
-        console.error('Error during vend:', error)
-    }
-}
-
-// Function to call the /accept API
-async function accept() {
-    const token = document.getElementById('tokenInput').value
-    if (!player_id || !token) {
-        console.error('Player ID or token not available')
-        return
-    }
-    
-    try {
-        const response = await fetch('/accept', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ player_id, token })
-        })
-
-        if (!response.ok) {
-            console.error('Accept failed')
+        let body = await response.json()
+        if (response.ok) {
+            if (peerConn !== undefined) {
+                peerConn.close()
+                sentAllIceCandidates = false
+                recievedAllIceCandidates = false
+                peerConn = undefined
+            }
+            document.querySelector('.token-text').textContent = body['token']
         } else {
-            console.log('Accept successful')
+            alert(body['err'])
         }
-    } catch (error) {
-        console.error('Error during accept:', error)
+    })
+}
+
+async function accept() {
+    withPlayerId(async () => {
+        let token = document.getElementById('tokenInput').value
+        let response = await fetch('/accept', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ 'player_id': playerId, 'token': token })
+        })
+        if (response.ok) {
+            if (peerConn !== undefined) {
+                peerConn.close()
+                sentAllIceCandidates = false
+                recievedAllIceCandidates = false
+            }
+            peerConn = new RTCPeerConnection(RTC_CONFIG)
+            dataChannel = peerConn.createDataChannel('data')
+            dataChannel.onmessage = onMessage
+            peerConn.onicecandidate = onIceCandidate
+            console.log('offering....')
+            peerConn.createOffer().then(description =>
+                peerConn.setLocalDescription(description).then(sendLocalDescription).catch(handleError))
+                .catch(handleError)
+
+            dataChannel.onopen = function (event) {
+                dataChannel.send('{"challenge" : "accepted"}')
+            }
+        } else {
+            let body = await response.json()
+            alert(body['err'])
+        }
+    })
+}
+
+async function onIceCandidate(event) {
+    console.log(event.candidate)
+    if (event.candidate !== null) {
+        await fetch('/msg', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ 'player_id': playerId, 'content': { 'ice': event.candidate } })
+        })
+    } else {
+        sentAllIceCandidates = true
+        if (recievedAllIceCandidates) {
+            closeEventSource()
+        }
     }
 }
 
-// Attach event listeners to buttons
-document.getElementById('vendButton').addEventListener('click', vend)
-document.getElementById('acceptButton').addEventListener('click', accept)
+async function sendLocalDescription() {
+    await fetch('/msg', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ 'player_id': playerId, 'content': { 'sdp': peerConn.localDescription } })
+    })
+}
+
+function onMessage(message) {
+    console.log('recieved message from player', message)
+    let data = JSON.parse(message.data)
+    if (data['challenge'] === 'accepted') {
+        dataChannel.send('{"challenge" : "nah"}')
+    }
+}
+
+function handleError(e) {
+    console.log(e)
+}
+
+async function withPlayerId(fn) {
+    if (eventSource === undefined) {
+        setupEventSource(fn)
+    } else {
+        await fn()
+    }
+}
+
+setupEventSource(() => { })
+
+document.addEventListener('mousemove', (event) => {
+    let screenWidth = window.innerWidth;
+    let mouseX = event.clientX;
+    let x = (mouseX < screenWidth / 2) ? 45 : 30
+    let leftSection = document.querySelector('.left-section')
+    leftSection.style.transition = 'clip-path 0.25s ease-in-out'
+    leftSection.style.clipPath = `polygon(0 0, ${x + 20}% 0, ${x}% 100%, 0% 100%)`
+})
+document.querySelector('.challenge-text').addEventListener('click', vend)  
