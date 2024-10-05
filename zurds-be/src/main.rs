@@ -19,7 +19,8 @@ mod request;
 mod response;
 
 const INDEX: &str = "/index.html";
-const RESOURCES: phf::Map<&'static str, &'static [u8]> = incdir::include_dir!("res");
+const RES: phf::Map<&'static str, &'static [u8]> = incdir::include_dir!("../zurds-fe/res");
+const PKG: phf::Map<&'static str, &'static [u8]> = incdir::include_dir!("../zurds-fe/pkg");
 
 #[tokio::main]
 async fn main() -> Result<(), tokio::io::Error> {
@@ -102,25 +103,28 @@ async fn player(table: ArcMutex<Table>, mut stream: TcpStream) -> Result<(), tok
     Ok(())
 }
 
-// simple get for getting files from `RESOURCES`
+// Simple get for getting files from `RES` & `PKG`. Prioritize `RES` over `PKG` if there is a name conflict.
 async fn get(path: &[&str], stream: &mut TcpStream) -> Result<(), tokio::io::Error> {
-    let response = match RESOURCES.get(&path.join("/")) {
-        Some(response) => {
+    let response = match (RES.get(&path.join("/")), PKG.get(&path.join("/"))) {
+        (Some(response), _) | (None, Some(response)) => {
             let mut headers = HashMap::new();
             let content_type = match path
                 .last()
                 .map(|x| x.split('.').last())
                 .flatten()
-                .expect(&format!("bug: bad filename: {:?}", path))
             {
-                "html" => Ok("text/html"),
-                "css" => Ok("text/css"),
-                "txt" => Ok("text/plain"),
-                "js" => Ok("text/javascript"),
-                "json" => Ok("application/json"),
-                "jpg" | "jpeg" => Ok("image/jpeg"),
-                "png" => Ok("image/png"),
-                "webp" => Ok("image/webp"),
+                Some(ext) => match ext {
+                    "html" => Ok("text/html"),
+                    "css" => Ok("text/css"),
+                    "txt" => Ok("text/plain"),
+                    "js" => Ok("text/javascript"),
+                    "json" => Ok("application/json"),
+                    "jpg" | "jpeg" => Ok("image/jpeg"),
+                    "png" => Ok("image/png"),
+                    "webp" => Ok("image/webp"),
+                    "wasm" => Ok("application/wasm"),
+                    _ => Err(()),
+                }
                 _ => Err(()),
             };
 
@@ -136,7 +140,7 @@ async fn get(path: &[&str], stream: &mut TcpStream) -> Result<(), tokio::io::Err
                 Err(_) => http_err!(404),
             }
         }
-        None => http_err!(404),
+        _ => http_err!(404),
     };
     write_http_response(&response, stream).await
 }
