@@ -1,5 +1,6 @@
 use escape8259::unescape;
 use phf::{phf_map, Map};
+use no_panic::no_panic;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Punc {
@@ -10,7 +11,6 @@ pub enum Punc {
     BracketRight,
     ParenLeft,
     ParenRight,
-    Dot,
     Comma,
 }
 
@@ -22,7 +22,6 @@ const PUNC: Map<&str, Punc> = phf_map!(
     "}" => Punc::BracketRight,
     "(" => Punc::ParenLeft,
     ")" => Punc::ParenRight,
-    "." => Punc::Dot,
     "," => Punc::Comma,
 );
 
@@ -30,6 +29,10 @@ const PUNC: Map<&str, Punc> = phf_map!(
 pub enum Op {
     Eq,
     Neq,
+    AddAssign,
+    SubAssign,
+    MulAssign,
+    DivAssign,
     Assign,
     LThanEq,
     GThanEq,
@@ -41,12 +44,19 @@ pub enum Op {
     Div,
     Mod,
     Range,
+    Access,
+    Pow,
 }
 
 const OP: Map<&str, Op> = phf_map!(
+    "." => Op::Access,
     "==" => Op::Eq,
     "!=" => Op::Neq,
     "=" => Op::Assign,
+    "+=" => Op::AddAssign,
+    "-=" => Op::SubAssign,
+    "*=" => Op::MulAssign,
+    "/=" => Op::DivAssign,
     "<=" => Op::LThanEq,
     ">=" => Op::GThanEq,
     "<" => Op::LThan,
@@ -56,7 +66,8 @@ const OP: Map<&str, Op> = phf_map!(
     "*" => Op::Mul,
     "/" => Op::Div,
     "%" => Op::Mod,
-    ".." => Op::Range
+    ".." => Op::Range,
+    "**" => Op::Pow
 );
 
 #[derive(Clone, Copy, Debug)]
@@ -72,7 +83,7 @@ pub enum Kw {
     Not,
     And,
     Or,
-    In
+    In,
 }
 
 const KW: Map<&str, Kw> = phf_map!(
@@ -101,6 +112,7 @@ pub enum Literal {
 #[derive(Debug)]
 pub enum Token {
     Indent,
+    NewLine,
     Punc(Punc),
     Op(Op),
     Kw(Kw),
@@ -110,17 +122,17 @@ pub enum Token {
 
 pub type Ident = String;
 
-fn match_exact<T: Copy>(map: Map<&str, T>, s: &str) -> Option<(usize, T)> {
-    let mut longest_str = "";
+fn match_exact<T: Copy + std::fmt::Debug>(map: Map<&str, T>, s: &str) -> Option<(usize, T)> {
+    let mut longest = 0;
     let mut longest_match = None;
     for (k, v) in map.entries() {
-        if s.starts_with(k) && s.len() > longest_str.len() {
+        if s.starts_with(k) && k.len() > longest {
             longest_match = Some(*v);
-            longest_str = k;
+            longest = k.len();
         }
     }
     if let Some(longest_match) = longest_match {
-        Some((longest_str.len(), longest_match))
+        Some((longest, longest_match))
     } else {
         None
     }
@@ -147,21 +159,21 @@ fn match_flt(chars: &[char], s: &str) -> Result<Option<(usize, f64)>, String> {
     if chars[0] == '-' {
         i += 1;
     }
-    let mut has_number = false;
+    let mut numbers = [false, false];
     while i < chars.len() && chars[i].is_ascii_digit() {
-        has_number = true;
+        numbers[0] = true;
         i += 1;
     }
-    if i < chars.len() &&  chars[i] == '.' {
+    if i < chars.len() && chars[i] == '.' {
         i += 1;
     } else {
         return Ok(None);
     }
     while i < chars.len() && chars[i].is_ascii_digit() {
-        has_number = true;
+        numbers[1] = true;
         i += 1;
     }
-    if !has_number {
+    if !numbers.into_iter().all(|x| x) {
         return Ok(None);
     }
     Ok(Some((i, s[0..i].parse().map_err(|x| format!("{}", x))?)))
@@ -184,11 +196,11 @@ fn match_str(chars: &[char]) -> Result<Option<(usize, String)>, String> {
     let mut first = true;
     let mut s = "".to_string();
     for (i, c) in chars.iter().enumerate() {
-        if c != &'"' && first {
+        if (c != &'"' && c != &'\'') && first {
             return Ok(None);
         } else if c == &'\\' && !escp {
             escp = true;
-        } else if c == &'"' && !escp && !first {
+        } else if (c == &'"' || c == &'\'') && !escp && !first {
             return Ok(Some((i + 1, unescape(s).map_err(|x| format!("{}", x))?)));
         } else if !c.is_whitespace() {
             escp = false;
@@ -215,7 +227,8 @@ fn match_kw(pos: usize, s: &str, chars: &[char]) -> Option<(usize, Kw)> {
 }
 
 fn brk(i: usize, s: &str, chars: &[char]) -> bool {
-    chars[i] == ' '
+    i >= chars.len()
+        || chars[i] == ' '
         || chars[i] == '\n'
         || match_exact(OP, &s[i..]).is_some()
         || match_exact(PUNC, &s[i..]).is_some()
@@ -228,10 +241,13 @@ pub struct TokenizationError {
     err: String,
 }
 
+#[no_panic]
 pub fn tokenize(s: &str) -> Result<Vec<Token>, TokenizationError> {
     let mut col = 0;
     let mut line = 1;
     let mut pos = 0;
+
+    panic!("test");
 
     if !s.is_ascii() {
         return Err(TokenizationError {
@@ -251,6 +267,7 @@ pub fn tokenize(s: &str) -> Result<Vec<Token>, TokenizationError> {
             }
             col = 0;
             line += 1;
+            tokens.push(Token::NewLine);
             continue;
         }
 
@@ -279,18 +296,19 @@ pub fn tokenize(s: &str) -> Result<Vec<Token>, TokenizationError> {
             col = 0;
             line += 1;
             pos += 1;
+            tokens.push(Token::NewLine);
             continue;
         }
 
         // tokens
         let mut match_len = None;
-        if let Some((i, f)) =
-            match_flt(&chars[pos..], &s[pos..]).map_err(|err| TokenizationError { col, line, err })?
+        if let Some((i, f)) = match_flt(&chars[pos..], &s[pos..])
+            .map_err(|err| TokenizationError { col, line, err })?
         {
             tokens.push(Token::Literal(Literal::Float(f)));
             match_len = Some(i);
-        } else if let Some((i, int)) =
-            match_int(&chars[pos..], &s[pos..]).map_err(|err| TokenizationError { col, line, err })?
+        } else if let Some((i, int)) = match_int(&chars[pos..], &s[pos..])
+            .map_err(|err| TokenizationError { col, line, err })?
         {
             tokens.push(Token::Literal(Literal::Int(int)));
             match_len = Some(i);
@@ -313,7 +331,11 @@ pub fn tokenize(s: &str) -> Result<Vec<Token>, TokenizationError> {
             match_len = Some(i);
         } else {
             let mut i = pos;
-            while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
+            while i < chars.len()
+                && (chars[i].is_ascii_alphanumeric()
+                    || chars[i] == '_'
+                    || (i == pos && chars[i] == '@'))
+            {
                 i += 1;
             }
             if i != pos {
@@ -333,9 +355,39 @@ pub fn tokenize(s: &str) -> Result<Vec<Token>, TokenizationError> {
             });
         }
     }
-    Ok(tokens)
-}
 
+    // remove any completely blank lines
+    let mut tokens_without_blank_lines = vec![];
+    let mut blank = true;
+    let mut indents = 0;
+    for token in tokens {
+        match (blank, token) {
+            (true, Token::Indent) => indents += 1,
+            (_, Token::NewLine) => {
+                if !blank {
+                    tokens_without_blank_lines.push(Token::NewLine);
+                }
+                indents = 0;
+                blank = true;
+            }
+            (_, token) => {
+                for _ in 0..indents {
+                    tokens_without_blank_lines.push(Token::Indent);
+                }
+                tokens_without_blank_lines.push(token);
+                blank = false;
+                indents = 0;
+            }
+        }
+    }
+    match tokens_without_blank_lines.last() {
+        Some(Token::NewLine) => {}
+        _ => {
+            tokens_without_blank_lines.push(Token::NewLine);
+        }
+    }
+    Ok(tokens_without_blank_lines)
+}
 
 #[cfg(test)]
 mod tests {
@@ -343,10 +395,10 @@ mod tests {
 
     #[test]
     fn test_tokenize_float() {
-        for scenario in ["0.5", ".5", "000.5", " 0.50000", "   0.5      "] {
+        for scenario in ["0.5", "000.5", " 0.50000", "   0.5      "] {
             match tokenize(scenario).as_deref() {
-                Ok([Token::Literal(Literal::Float(0.5))]) => {}
-                _ => panic!("doesn't match")
+                Ok([Token::Literal(Literal::Float(0.5)), Token::NewLine]) => {}
+                _ => panic!("doesn't match"),
             }
         }
     }
@@ -354,8 +406,35 @@ mod tests {
     #[test]
     fn test_tokenize_int() {
         match tokenize("5").as_deref() {
-            Ok([Token::Literal(Literal::Int(5))]) => {}
-            _ => panic!("doesn't match")
+            Ok([Token::Literal(Literal::Int(5)), Token::NewLine]) => {}
+            _ => panic!("doesn't match"),
+        }
+    }
+
+    #[test]
+    fn test_tokenize_range() {
+        match tokenize("0..5").as_deref() {
+            Ok(
+                [Token::Literal(Literal::Int(0)), Token::Op(Op::Range), Token::Literal(Literal::Int(5)), Token::NewLine],
+            ) => {}
+            x => panic!("doesn't match {:?}", x),
+        }
+    }
+
+    #[test]
+    fn test_tokenize_dict() {
+        match tokenize("{'hello' : 'world'}").as_deref() {
+            Ok(
+                [Token::Punc(Punc::BracketLeft), Token::Literal(Literal::String(a)), Token::Punc(Punc::Colon), Token::Literal(Literal::String(b)), Token::Punc(Punc::BracketRight), Token::NewLine],
+            ) => {
+                if a != "hello" || b != "world" {
+                    panic!(
+                        "expected map to contain 'hello' : 'world', contains '{}' : '{}'",
+                        a, b
+                    )
+                }
+            }
+            x => panic!("doesn't match {:?}", x),
         }
     }
 }
