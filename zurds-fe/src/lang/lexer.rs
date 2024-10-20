@@ -1,6 +1,14 @@
+use std::{
+    char,
+    convert::identity,
+    iter::repeat,
+    str::{CharIndices, Chars},
+};
+
 use escape8259::unescape;
 use phf::{phf_map, Map};
-use no_panic::no_panic;
+
+use super::characters::Characters;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Punc {
@@ -122,116 +130,153 @@ pub enum Token {
 
 pub type Ident = String;
 
-fn match_exact<T: Copy + std::fmt::Debug>(map: Map<&str, T>, s: &str) -> Option<(usize, T)> {
+fn match_exact<T: Copy + std::fmt::Debug>(
+    map: Map<&str, T>,
+    chars: &mut Characters<'_>,
+) -> Option<T> {
     let mut longest = 0;
     let mut longest_match = None;
     for (k, v) in map.entries() {
-        if s.starts_with(k) && k.len() > longest {
-            longest_match = Some(*v);
-            longest = k.len();
+        if let Some(skip) = chars.match_exact(&k) {
+            if k.len() > longest {
+                longest_match = Some((*v, skip));
+                longest = k.len();
+            }
         }
     }
-    if let Some(longest_match) = longest_match {
-        Some((longest, longest_match))
+    if let Some((val, skip)) = longest_match {
+        chars.skip(skip);
+        Some(val)
     } else {
         None
     }
 }
 
-fn match_int(chars: &[char], s: &str) -> Result<Option<(usize, i64)>, String> {
-    let mut i = 0;
-    if chars[0] == '-' {
-        i += 1;
+fn match_int(chars: &mut Characters<'_>) -> Result<Option<i64>, String> {
+    let mut c = chars.next();
+    if c == Some('-') {
+        c = chars.next();
     }
     let mut has_number = false;
-    while i < chars.len() && chars[i].is_ascii_digit() {
+    while c.map_or(false, |c| c.is_ascii_digit()) {
         has_number = true;
-        i += 1;
+        c = chars.next();
     }
-    if !has_number {
-        return Ok(None);
-    }
-    Ok(Some((i, s[0..i].parse().map_err(|x| format!("{}", x))?)))
-}
-
-fn match_flt(chars: &[char], s: &str) -> Result<Option<(usize, f64)>, String> {
-    let mut i = 0;
-    if chars[0] == '-' {
-        i += 1;
-    }
-    let mut numbers = [false, false];
-    while i < chars.len() && chars[i].is_ascii_digit() {
-        numbers[0] = true;
-        i += 1;
-    }
-    if i < chars.len() && chars[i] == '.' {
-        i += 1;
+    if has_number {
+        if c.is_some() {
+            chars.undo();
+        }
+        Ok(Some(
+            chars.consumed().parse().map_err(|x| format!("{}", x))?,
+        ))
     } else {
-        return Ok(None);
+        Ok(None)
     }
-    while i < chars.len() && chars[i].is_ascii_digit() {
-        numbers[1] = true;
-        i += 1;
-    }
-    if !numbers.into_iter().all(|x| x) {
-        return Ok(None);
-    }
-    Ok(Some((i, s[0..i].parse().map_err(|x| format!("{}", x))?)))
 }
 
-fn match_bool(pos: usize, s: &str, chars: &[char]) -> Option<(usize, bool)> {
-    if (s[pos..].starts_with("true") || s[pos..].starts_with("True")) && brk(pos + 4, s, chars) {
-        Some((4, true))
-    } else if s[pos..].starts_with("false")
-        || s[pos..].starts_with("False") && brk(pos + 5, s, chars)
-    {
-        Some((5, false))
+fn match_flt(chars: &mut Characters<'_>) -> Result<Option<f64>, String> {
+    let mut numbers = [false, false];
+    let mut c = chars.next();
+    if c == Some('-') {
+        c = chars.next();
+    }
+    while c.map_or(false, |c| c.is_ascii_digit()) {
+        numbers[0] = true;
+        c = chars.next();
+    }
+    if c != Some('.') {
+        return Ok(None);
+    } else {
+        c = chars.next();
+    }
+    while c.map_or(false, |c| c.is_ascii_digit()) {
+        numbers[1] = true;
+        c = chars.next();
+    }
+    if numbers[0] && numbers[1] {
+        if c.is_some() {
+            chars.undo();
+        }
+        Ok(Some(
+            chars.consumed().parse().map_err(|x| format!("{}", x))?,
+        ))
+    } else {
+        Ok(None)
+    }
+}
+
+fn match_bool(chars: &mut Characters<'_>) -> Option<bool> {
+    let bool = match_exact(phf_map!("true" => true, "false" => false), chars)?;
+    if brk(chars) {
+        Some(bool)
     } else {
         None
     }
 }
 
-fn match_str(chars: &[char]) -> Result<Option<(usize, String)>, String> {
+fn match_str(chars: &mut Characters<'_>) -> Result<Option<String>, String> {
     let mut escp = false;
     let mut first = true;
+    let mut opened = false;
     let mut s = "".to_string();
-    for (i, c) in chars.iter().enumerate() {
-        if (c != &'"' && c != &'\'') && first {
+    while let Some(c) = chars.next() {
+        if (c != '"' && c != '\'') && first {
             return Ok(None);
-        } else if c == &'\\' && !escp {
+        } else if c == '\\' && !escp {
             escp = true;
-        } else if (c == &'"' || c == &'\'') && !escp && !first {
-            return Ok(Some((i + 1, unescape(s).map_err(|x| format!("{}", x))?)));
+        } else if (c == '"' || c == '\'') && !escp && !first {
+            return Ok(Some(unescape(s).map_err(|x| format!("{}", x))?));
         } else if !c.is_whitespace() {
             escp = false;
         }
         if !first {
-            if c == &'\n' {
+            if c == '\n' {
                 s += "\\n";
             } else {
                 s += &format!("{}", c);
             }
         }
         first = false;
+        opened = true;
     }
-    return Err("unclosed string".into());
+    if opened {
+        Err("unclosed string".into())
+    } else {
+        Ok(None)
+    }
 }
 
-fn match_kw(pos: usize, s: &str, chars: &[char]) -> Option<(usize, Kw)> {
-    if let Some((i, kw)) = match_exact(KW, &s[pos..]) {
-        if brk(pos + i, s, chars) {
-            return Some((i, kw));
+fn match_kw(chars: &mut Characters<'_>) -> Option<Kw> {
+    if let Some(kw) = match_exact(KW, chars) {
+        if brk(chars) {
+            return Some(kw);
         }
     }
     None
 }
 
-fn brk(i: usize, s: &str, chars: &[char]) -> bool {
-    i >= chars.len()
-        || chars[i] == ' '
-        || chars[i] == '\n'
-        || match_exact(OP, &s[i..]).is_some()
-        || match_exact(PUNC, &s[i..]).is_some()
+/// is there a break ahead?
+fn brk(chars: &Characters<'_>) -> bool {
+    let mut chars = chars.clone();
+    match_exact(OP, &mut chars).is_some() || match_exact(PUNC, &mut chars).is_some() || {
+        let c = chars.next();
+        c == None || c == Some(' ') || c == Some('\n')
+    }
+}
+
+fn match_ident(chars: &mut Characters<'_>) -> Option<String> {
+    let mut first = true;
+    while let Some(c) = chars.next() {
+        if !(c == '_' || (c == '@' && first) || c.is_ascii_alphanumeric()) {
+            break;
+        }
+        first = false;
+    }
+    if chars.consumed().len() > 0 {
+        Some(chars.consumed().to_string())
+    } else {
+        None
+    }
 }
 
 #[derive(Debug)]
@@ -241,112 +286,92 @@ pub struct TokenizationError {
     err: String,
 }
 
-#[no_panic]
+const INDENT_SIZE: usize = 4;
 pub fn tokenize(s: &str) -> Result<Vec<Token>, TokenizationError> {
     let mut col = 0;
     let mut line = 1;
-    let mut pos = 0;
-
-    panic!("test");
-
-    if !s.is_ascii() {
-        return Err(TokenizationError {
-            col,
-            line,
-            err: "program should only contain ascii characters".into(),
-        });
-    }
-
-    let chars: Vec<_> = s.chars().collect();
     let mut tokens = vec![];
-    while pos < chars.len() {
+    let mut chars = s.chars();
+    loop {
+        let c = if let Some((c)) = chars.clone().next() {
+            c
+        } else {
+            break;
+        };
         // comment, skip chars until newline
-        if chars[pos] == '#' {
-            while pos < chars.len() && chars[pos] != '\n' {
-                pos += 1;
-            }
+        if c == '#' {
             col = 0;
             line += 1;
+            loop {
+                if let Some(c) = chars.next() {
+                    if c == '\n' {
+                        break;
+                    }
+                } else {
+                    break;
+                };
+            }
             tokens.push(Token::NewLine);
             continue;
         }
 
         // indentation
-        if col == 0 && chars[pos] == ' ' {
-            let mut i = 0;
-            while chars[pos] == ' ' {
-                col += 1;
-                pos += 1;
-                i += 1;
+        if col == 0 && c == ' ' {
+            let mut spaces = 0;
+            {
+                let mut chars = chars.clone();
+                while let Some(' ') = chars.next() {
+                    spaces += 1;
+                    col += 1;
+                }
             }
-            let indents = i / 4;
-            for _ in 0..indents {
-                tokens.push(Token::Indent);
-            }
+            let indents = spaces / INDENT_SIZE;
+            // each ' ' is 1 byte so indexing indents * 4 onwards is okay to do
+            chars = chars.as_str()[indents * 4..].chars();
+            tokens.extend((0..indents).map(|_| Token::Indent));
             continue;
         }
 
         // whitespace
-        if chars[pos] == ' ' {
+        if c == ' ' {
             col += 1;
-            pos += 1;
+            chars.next();
             continue;
         }
-        if chars[pos] == '\n' {
+        if c == '\n' {
             col = 0;
             line += 1;
-            pos += 1;
             tokens.push(Token::NewLine);
+            chars.next();
             continue;
         }
 
-        // tokens
-        let mut match_len = None;
-        if let Some((i, f)) = match_flt(&chars[pos..], &s[pos..])
-            .map_err(|err| TokenizationError { col, line, err })?
-        {
-            tokens.push(Token::Literal(Literal::Float(f)));
-            match_len = Some(i);
-        } else if let Some((i, int)) = match_int(&chars[pos..], &s[pos..])
-            .map_err(|err| TokenizationError { col, line, err })?
-        {
-            tokens.push(Token::Literal(Literal::Int(int)));
-            match_len = Some(i);
-        } else if let Some((i, s)) =
-            match_str(&chars[pos..]).map_err(|err| TokenizationError { col, line, err })?
-        {
-            tokens.push(Token::Literal(Literal::String(s)));
-            match_len = Some(i);
-        } else if let Some((s, op)) = match_exact(OP, &s[pos..]) {
-            tokens.push(Token::Op(op));
-            match_len = Some(s);
-        } else if let Some((s, punc)) = match_exact(PUNC, &s[pos..]) {
-            tokens.push(Token::Punc(punc));
-            match_len = Some(s);
-        } else if let Some((i, kw)) = match_kw(pos, s, &chars) {
-            tokens.push(Token::Kw(kw));
-            match_len = Some(i);
-        } else if let Some((i, b)) = match_bool(pos, s, &chars) {
-            tokens.push(Token::Literal(Literal::Bool(b)));
-            match_len = Some(i);
-        } else {
-            let mut i = pos;
-            while i < chars.len()
-                && (chars[i].is_ascii_alphanumeric()
-                    || chars[i] == '_'
-                    || (i == pos && chars[i] == '@'))
-            {
-                i += 1;
-            }
-            if i != pos {
-                tokens.push(Token::Ident(s[pos..i].into()));
-                match_len = Some(i - pos);
+        let mut characters = None;
+        #[rustfmt::skip]
+        let matchers = [
+            |mut chars| (match_flt(&mut chars).map(|op| op.map(|flt| Token::Literal(Literal::Float(flt)))), chars),
+            |mut chars| (match_int(&mut chars).map(|op| op.map(|int| Token::Literal(Literal::Int(int)))), chars),
+            |mut chars| (match_str(&mut chars).map(|op| op.map(|s| Token::Literal(Literal::String(s)))), chars),
+            |mut chars| (Ok(match_exact(OP, &mut chars).map(|op| Token::Op(op))), chars),
+            |mut chars| (Ok(match_exact(PUNC, &mut chars).map(|punc: Punc| Token::Punc(punc))), chars),
+            |mut chars| (Ok(match_kw(&mut chars).map(|kw| Token::Kw(kw))), chars),
+            |mut chars| (Ok(match_bool(&mut chars).map(|bool| Token::Literal(Literal::Bool(bool)))), chars),
+            |mut chars| (Ok(match_ident(&mut chars).map(|ident| Token::Ident(ident))), chars)
+        ];
+        for matcher in matchers {
+            let (res, c) = matcher(Characters::new(&chars));
+            let res = res.map_err(|err| TokenizationError { col, line, err })?;
+            if let Some(token) = res {
+                characters = Some(c);
+                tokens.push(token);
+                break;
             }
         }
 
-        if let Some(match_len) = match_len {
-            col += match_len;
-            pos += match_len;
+        if let Some(characters) = characters {
+            let token = characters.consumed();
+            chars = chars.as_str()[token.len()..].chars();
+            col += token.len();
         } else {
             return Err(TokenizationError {
                 col,
@@ -380,6 +405,8 @@ pub fn tokenize(s: &str) -> Result<Vec<Token>, TokenizationError> {
             }
         }
     }
+
+    // tack on a newline at the end if there isn't one
     match tokens_without_blank_lines.last() {
         Some(Token::NewLine) => {}
         _ => {
@@ -398,16 +425,26 @@ mod tests {
         for scenario in ["0.5", "000.5", " 0.50000", "   0.5      "] {
             match tokenize(scenario).as_deref() {
                 Ok([Token::Literal(Literal::Float(0.5)), Token::NewLine]) => {}
-                _ => panic!("doesn't match"),
+                x => panic!("doesn't match {:?}", x),
             }
         }
     }
 
     #[test]
     fn test_tokenize_int() {
-        match tokenize("5").as_deref() {
-            Ok([Token::Literal(Literal::Int(5)), Token::NewLine]) => {}
-            _ => panic!("doesn't match"),
+        for scenario in ["5", " 5", "5 ", "   5    "] {
+            match tokenize(scenario).as_deref() {
+                Ok([Token::Literal(Literal::Int(5)), Token::NewLine]) => {}
+                x => panic!("doesn't match {:?}", x),
+            }
+        }
+    }
+
+    #[test]
+    fn test_math() {
+        match tokenize("5+2*10").as_deref() {
+            Ok([Token::Literal(Literal::Int(5)), Token::Op(Op::Add), Token::Literal(Literal::Int(2)), Token::Op(Op::Mul), Token::Literal(Literal::Int(10)), Token::NewLine]) => {}
+            x => panic!("doesn't match {:?}", x),
         }
     }
 
