@@ -152,7 +152,8 @@ fn match_exact<T: Copy + std::fmt::Debug>(
     }
 }
 
-fn match_int(chars: &mut Characters<'_>) -> Result<Option<i64>, String> {
+fn match_int(characters: &mut Characters<'_>) -> Result<Option<i64>, String> {
+    let mut chars = characters.clone();
     let mut c = chars.next();
     if c == Some('-') {
         c = chars.next();
@@ -163,18 +164,21 @@ fn match_int(chars: &mut Characters<'_>) -> Result<Option<i64>, String> {
         c = chars.next();
     }
     if has_number {
-        if c.is_some() {
-            chars.undo();
+        let mut s = chars.get_skip();
+        if let Some(c) = c {
+            s.skip -= c.len_utf8();
         }
+        characters.skip(s);
         Ok(Some(
-            chars.consumed().parse().map_err(|x| format!("{}", x))?,
+            characters.consumed().parse().map_err(|x| format!("{}", x))?,
         ))
     } else {
         Ok(None)
     }
 }
 
-fn match_flt(chars: &mut Characters<'_>) -> Result<Option<f64>, String> {
+fn match_flt(characters: &mut Characters<'_>) -> Result<Option<f64>, String> {
+    let mut chars = characters.clone();
     let mut numbers = [false, false];
     let mut c = chars.next();
     if c == Some('-') {
@@ -194,11 +198,13 @@ fn match_flt(chars: &mut Characters<'_>) -> Result<Option<f64>, String> {
         c = chars.next();
     }
     if numbers[0] && numbers[1] {
-        if c.is_some() {
-            chars.undo();
+        let mut s = chars.get_skip();
+        if let Some(c) = c {
+            s.skip -= c.len_utf8();
         }
+        characters.skip(s);
         Ok(Some(
-            chars.consumed().parse().map_err(|x| format!("{}", x))?,
+            characters.consumed().parse().map_err(|x| format!("{}", x))?,
         ))
     } else {
         Ok(None)
