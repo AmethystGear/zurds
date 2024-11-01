@@ -1,4 +1,17 @@
+prev = 'placeholder'
+dict = {}
 for x in 0..10:
     for y in 0..10:
-        if x + y == 5:
-            print(x.str() + "," + y.str())
+        if x * y == 5 or x + y == 8:
+            v = x.str() + "," + y.str()
+            dict.[v] = prev
+            prev = v
+
+print(dict.str())
+
+for key in dict.keys():
+    if dict.[key].has('placeholder'):
+        dict.remove(key)
+        print("removing " + key)
+
+print(dict.str())

@@ -1,14 +1,7 @@
-use std::{
-    char,
-    convert::identity,
-    iter::repeat,
-    str::{CharIndices, Chars},
-};
 
 use escape8259::unescape;
 use phf::{phf_map, Map};
-
-use super::characters::Characters;
+use super::{characters::Characters, err::{LangErr, Loc}};
 
 #[derive(Clone, Copy, Debug)]
 pub enum Punc {
@@ -37,11 +30,6 @@ const PUNC: Map<&str, Punc> = phf_map!(
 pub enum Op {
     Eq,
     Neq,
-    AddAssign,
-    SubAssign,
-    MulAssign,
-    DivAssign,
-    Assign,
     LThanEq,
     GThanEq,
     LThan,
@@ -56,38 +44,45 @@ pub enum Op {
     Pow,
 }
 
-const OP: Map<&str, Op> = phf_map!(
-    "." => Op::Access,
-    "==" => Op::Eq,
-    "!=" => Op::Neq,
-    "=" => Op::Assign,
-    "+=" => Op::AddAssign,
-    "-=" => Op::SubAssign,
-    "*=" => Op::MulAssign,
-    "/=" => Op::DivAssign,
-    "<=" => Op::LThanEq,
-    ">=" => Op::GThanEq,
-    "<" => Op::LThan,
-    ">" => Op::GThan,
-    "+" => Op::Add,
-    "-" => Op::Sub,
-    "*" => Op::Mul,
-    "/" => Op::Div,
-    "%" => Op::Mod,
-    ".." => Op::Range,
-    "**" => Op::Pow
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AssignOp {
+    Add,
+    Sub,
+    Mul,
+    Div
+}
+
+const OP: Map<&str, Token> = phf_map!(
+    "." => Token::Op(Op::Access),
+    "==" => Token::Op(Op::Eq),
+    "!=" => Token::Op(Op::Neq),
+    "<=" => Token::Op(Op::LThanEq),
+    ">=" => Token::Op(Op::GThanEq),
+    "<" => Token::Op(Op::LThan),
+    ">" => Token::Op(Op::GThan),
+    "+" => Token::Op(Op::Add),
+    "-" => Token::Op(Op::Sub),
+    "*" => Token::Op(Op::Mul),
+    "/" => Token::Op(Op::Div),
+    "%" => Token::Op(Op::Mod),
+    ".." => Token::Op(Op::Range),
+    "**" => Token::Op(Op::Pow),
+    "=" => Token::Assign(None),
+    "+=" => Token::Assign(Some(AssignOp::Add)),
+    "-=" => Token::Assign(Some(AssignOp::Sub)),
+    "*=" => Token::Assign(Some(AssignOp::Mul)),
+    "/=" => Token::Assign(Some(AssignOp::Div)),
 );
 
 #[derive(Clone, Copy, Debug)]
 pub enum Kw {
     If,
-    Elif,
     Else,
     Pass,
     Continue,
     Break,
     For,
-    While,
+    Loop,
     Not,
     And,
     Or,
@@ -96,20 +91,19 @@ pub enum Kw {
 
 const KW: Map<&str, Kw> = phf_map!(
     "if" => Kw::If,
-    "elif" => Kw::Elif,
     "else" => Kw::Else,
     "pass" => Kw::Pass,
     "break" => Kw::Break,
     "continue" => Kw::Continue,
     "for" => Kw::For,
-    "while" => Kw::While,
+    "loop" => Kw::Loop,
     "not" => Kw::Not,
     "and" => Kw::And,
     "or" => Kw::Or,
     "in" => Kw::In,
 );
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Literal {
     Int(i64),
     Float(f64),
@@ -117,7 +111,7 @@ pub enum Literal {
     String(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Token {
     Indent,
     NewLine,
@@ -126,11 +120,12 @@ pub enum Token {
     Kw(Kw),
     Literal(Literal),
     Ident(Ident),
+    Assign(Option<AssignOp>)
 }
 
 pub type Ident = String;
 
-fn match_exact<T: Copy + std::fmt::Debug>(
+fn match_exact<T: Clone + std::fmt::Debug>(
     map: Map<&str, T>,
     chars: &mut Characters<'_>,
 ) -> Option<T> {
@@ -139,20 +134,20 @@ fn match_exact<T: Copy + std::fmt::Debug>(
     for (k, v) in map.entries() {
         if let Some(skip) = chars.match_exact(&k) {
             if k.len() > longest {
-                longest_match = Some((*v, skip));
+                longest_match = Some((v.clone(), skip));
                 longest = k.len();
             }
         }
     }
     if let Some((val, skip)) = longest_match {
-        chars.skip(skip);
+        chars.skip(skip, None);
         Some(val)
     } else {
         None
     }
 }
 
-fn match_int(characters: &mut Characters<'_>) -> Result<Option<i64>, String> {
+fn match_int(characters: &mut Characters<'_>) -> Result<Option<i64>, (String, usize)> {
     let mut chars = characters.clone();
     let mut c = chars.next();
     if c == Some('-') {
@@ -164,20 +159,19 @@ fn match_int(characters: &mut Characters<'_>) -> Result<Option<i64>, String> {
         c = chars.next();
     }
     if has_number {
-        let mut s = chars.get_skip();
-        if let Some(c) = c {
-            s.skip -= c.len_utf8();
-        }
-        characters.skip(s);
+        characters.skip(chars.get_skip(), c);
         Ok(Some(
-            characters.consumed().parse().map_err(|x| format!("{}", x))?,
+            characters
+                .consumed()
+                .parse()
+                .map_err(|x| (format!("{}", x), characters.consumed().chars().count()))?,
         ))
     } else {
         Ok(None)
     }
 }
 
-fn match_flt(characters: &mut Characters<'_>) -> Result<Option<f64>, String> {
+fn match_flt(characters: &mut Characters<'_>) -> Result<Option<f64>, (String, usize)> {
     let mut chars = characters.clone();
     let mut numbers = [false, false];
     let mut c = chars.next();
@@ -198,13 +192,12 @@ fn match_flt(characters: &mut Characters<'_>) -> Result<Option<f64>, String> {
         c = chars.next();
     }
     if numbers[0] && numbers[1] {
-        let mut s = chars.get_skip();
-        if let Some(c) = c {
-            s.skip -= c.len_utf8();
-        }
-        characters.skip(s);
+        characters.skip(chars.get_skip(), c);
         Ok(Some(
-            characters.consumed().parse().map_err(|x| format!("{}", x))?,
+            characters
+                .consumed()
+                .parse()
+                .map_err(|x| (format!("{}", x), characters.consumed().chars().count()))?,
         ))
     } else {
         Ok(None)
@@ -220,7 +213,7 @@ fn match_bool(chars: &mut Characters<'_>) -> Option<bool> {
     }
 }
 
-fn match_str(chars: &mut Characters<'_>) -> Result<Option<String>, String> {
+fn match_str(chars: &mut Characters<'_>) -> Result<Option<String>, (String, usize)> {
     let mut escp = false;
     let mut first = true;
     let mut opened = false;
@@ -231,7 +224,8 @@ fn match_str(chars: &mut Characters<'_>) -> Result<Option<String>, String> {
         } else if c == '\\' && !escp {
             escp = true;
         } else if (c == '"' || c == '\'') && !escp && !first {
-            return Ok(Some(unescape(s).map_err(|x| format!("{}", x))?));
+            let count = s.chars().count();
+            return Ok(Some(unescape(s).map_err(|x| (format!("{}", x), count))?));
         } else if !c.is_whitespace() {
             escp = false;
         }
@@ -246,7 +240,7 @@ fn match_str(chars: &mut Characters<'_>) -> Result<Option<String>, String> {
         opened = true;
     }
     if opened {
-        Err("unclosed string".into())
+        Err(("unclosed string".into(), s.chars().count()))
     } else {
         Ok(None)
     }
@@ -272,11 +266,12 @@ fn brk(chars: &Characters<'_>) -> bool {
 
 fn match_ident(chars: &mut Characters<'_>) -> Option<String> {
     let mut first = true;
-    while let Some(c) = chars.next() {
+    while let Some(c) = chars.clone().next() {
         if !(c == '_' || (c == '@' && first) || c.is_ascii_alphanumeric()) {
             break;
         }
         first = false;
+        chars.next();
     }
     if chars.consumed().len() > 0 {
         Some(chars.consumed().to_string())
@@ -285,29 +280,31 @@ fn match_ident(chars: &mut Characters<'_>) -> Option<String> {
     }
 }
 
-#[derive(Debug)]
-pub struct TokenizationError {
-    col: usize,
-    line: usize,
-    err: String,
-}
-
 const INDENT_SIZE: usize = 4;
-pub fn tokenize(s: &str) -> Result<Vec<Token>, TokenizationError> {
+#[rustfmt::skip]
+const MATCHERS : [fn(Characters<'_>) -> (Result<Option<Token>, (String, usize)>, Characters<'_>); 8] = [
+    |mut chars| (match_flt(&mut chars).map(|op| op.map(|flt| Token::Literal(Literal::Float(flt)))), chars),
+    |mut chars| (match_int(&mut chars).map(|op| op.map(|int| Token::Literal(Literal::Int(int)))), chars),
+    |mut chars| (match_str(&mut chars).map(|op| op.map(|s| Token::Literal(Literal::String(s)))), chars),
+    |mut chars| (Ok(match_exact(OP, &mut chars).map(|op| op)), chars),
+    |mut chars| (Ok(match_exact(PUNC, &mut chars).map(|punc: Punc| Token::Punc(punc))), chars),
+    |mut chars| (Ok(match_kw(&mut chars).map(|kw| Token::Kw(kw))), chars),
+    |mut chars| (Ok(match_bool(&mut chars).map(|bool| Token::Literal(Literal::Bool(bool)))), chars),
+    |mut chars| (Ok(match_ident(&mut chars).map(|ident| Token::Ident(ident))), chars)
+];
+pub fn tokenize(s: &str) -> Result<Vec<(Token, Loc)>, LangErr> {
     let mut col = 0;
     let mut line = 1;
     let mut tokens = vec![];
     let mut chars = s.chars();
     loop {
-        let c = if let Some((c)) = chars.clone().next() {
+        let c = if let Some(c) = chars.clone().next() {
             c
         } else {
             break;
         };
         // comment, skip chars until newline
         if c == '#' {
-            col = 0;
-            line += 1;
             loop {
                 if let Some(c) = chars.next() {
                     if c == '\n' {
@@ -317,7 +314,9 @@ pub fn tokenize(s: &str) -> Result<Vec<Token>, TokenizationError> {
                     break;
                 };
             }
-            tokens.push(Token::NewLine);
+            tokens.push((Token::NewLine, Loc {col, line, len: 1}));
+            col = 0;
+            line += 1;
             continue;
         }
 
@@ -328,13 +327,13 @@ pub fn tokenize(s: &str) -> Result<Vec<Token>, TokenizationError> {
                 let mut chars = chars.clone();
                 while let Some(' ') = chars.next() {
                     spaces += 1;
-                    col += 1;
                 }
             }
             let indents = spaces / INDENT_SIZE;
             // each ' ' is 1 byte so indexing indents * 4 onwards is okay to do
             chars = chars.as_str()[indents * 4..].chars();
-            tokens.extend((0..indents).map(|_| Token::Indent));
+            tokens.extend((0..indents).map(|i| (Token::Indent, Loc {col : i * 4, line, len: 4})));
+            col += indents * 4;
             continue;
         }
 
@@ -345,31 +344,20 @@ pub fn tokenize(s: &str) -> Result<Vec<Token>, TokenizationError> {
             continue;
         }
         if c == '\n' {
+            tokens.push((Token::NewLine, Loc {col, line, len: 1}));
+            chars.next();
             col = 0;
             line += 1;
-            tokens.push(Token::NewLine);
-            chars.next();
             continue;
         }
 
         let mut characters = None;
-        #[rustfmt::skip]
-        let matchers = [
-            |mut chars| (match_flt(&mut chars).map(|op| op.map(|flt| Token::Literal(Literal::Float(flt)))), chars),
-            |mut chars| (match_int(&mut chars).map(|op| op.map(|int| Token::Literal(Literal::Int(int)))), chars),
-            |mut chars| (match_str(&mut chars).map(|op| op.map(|s| Token::Literal(Literal::String(s)))), chars),
-            |mut chars| (Ok(match_exact(OP, &mut chars).map(|op| Token::Op(op))), chars),
-            |mut chars| (Ok(match_exact(PUNC, &mut chars).map(|punc: Punc| Token::Punc(punc))), chars),
-            |mut chars| (Ok(match_kw(&mut chars).map(|kw| Token::Kw(kw))), chars),
-            |mut chars| (Ok(match_bool(&mut chars).map(|bool| Token::Literal(Literal::Bool(bool)))), chars),
-            |mut chars| (Ok(match_ident(&mut chars).map(|ident| Token::Ident(ident))), chars)
-        ];
-        for matcher in matchers {
+        for matcher in MATCHERS {
             let (res, c) = matcher(Characters::new(&chars));
-            let res = res.map_err(|err| TokenizationError { col, line, err })?;
+            let res = res.map_err(|(err, len)| LangErr { loc : Loc {col, line, len}, err})?;
             if let Some(token) = res {
+                tokens.push((token, Loc {col, line, len: c.consumed().len()}));
                 characters = Some(c);
-                tokens.push(token);
                 break;
             }
         }
@@ -379,9 +367,8 @@ pub fn tokenize(s: &str) -> Result<Vec<Token>, TokenizationError> {
             chars = chars.as_str()[token.len()..].chars();
             col += token.len();
         } else {
-            return Err(TokenizationError {
-                col,
-                line,
+            return Err(LangErr {
+                loc : Loc {col, line, len: 1},
                 err: "could not parse".into(),
             });
         }
@@ -391,21 +378,21 @@ pub fn tokenize(s: &str) -> Result<Vec<Token>, TokenizationError> {
     let mut tokens_without_blank_lines = vec![];
     let mut blank = true;
     let mut indents = 0;
-    for token in tokens {
+    for (token, loc) in tokens {
         match (blank, token) {
             (true, Token::Indent) => indents += 1,
             (_, Token::NewLine) => {
                 if !blank {
-                    tokens_without_blank_lines.push(Token::NewLine);
+                    tokens_without_blank_lines.push((Token::NewLine, loc));
                 }
                 indents = 0;
                 blank = true;
             }
             (_, token) => {
-                for _ in 0..indents {
-                    tokens_without_blank_lines.push(Token::Indent);
+                for i in 0..indents {
+                    tokens_without_blank_lines.push((Token::Indent, Loc {col : i * 4, line : loc.line, len: 4}));
                 }
-                tokens_without_blank_lines.push(token);
+                tokens_without_blank_lines.push((token, loc));
                 blank = false;
                 indents = 0;
             }
@@ -414,9 +401,9 @@ pub fn tokenize(s: &str) -> Result<Vec<Token>, TokenizationError> {
 
     // tack on a newline at the end if there isn't one
     match tokens_without_blank_lines.last() {
-        Some(Token::NewLine) => {}
+        Some((Token::NewLine, _)) => {}
         _ => {
-            tokens_without_blank_lines.push(Token::NewLine);
+            tokens_without_blank_lines.push((Token::NewLine, Loc {col: col + 1, line, len: 1}));
         }
     }
     Ok(tokens_without_blank_lines)
@@ -426,11 +413,18 @@ pub fn tokenize(s: &str) -> Result<Vec<Token>, TokenizationError> {
 mod tests {
     use super::*;
 
+    fn tok(s: &str) -> Vec<Token> {
+        tokenize(s)
+            .map(|x| x.into_iter().map(|(x, _)| x))
+            .unwrap()
+            .collect()
+    }
+
     #[test]
     fn test_tokenize_float() {
         for scenario in ["0.5", "000.5", " 0.50000", "   0.5      "] {
-            match tokenize(scenario).as_deref() {
-                Ok([Token::Literal(Literal::Float(0.5)), Token::NewLine]) => {}
+            match &tok(scenario)[..] {
+                [Token::Literal(Literal::Float(0.5)), Token::NewLine] => {}
                 x => panic!("doesn't match {:?}", x),
             }
         }
@@ -439,8 +433,8 @@ mod tests {
     #[test]
     fn test_tokenize_int() {
         for scenario in ["5", " 5", "5 ", "   5    "] {
-            match tokenize(scenario).as_deref() {
-                Ok([Token::Literal(Literal::Int(5)), Token::NewLine]) => {}
+            match &tok(scenario)[..] {
+                [Token::Literal(Literal::Int(5)), Token::NewLine] => {}
                 x => panic!("doesn't match {:?}", x),
             }
         }
@@ -448,28 +442,41 @@ mod tests {
 
     #[test]
     fn test_math() {
-        match tokenize("5+2*10").as_deref() {
-            Ok([Token::Literal(Literal::Int(5)), Token::Op(Op::Add), Token::Literal(Literal::Int(2)), Token::Op(Op::Mul), Token::Literal(Literal::Int(10)), Token::NewLine]) => {}
+        match &tok("5+2*10")[..] {
+            #[rustfmt::skip]
+            [
+                Token::Literal(Literal::Int(5)), 
+                Token::Op(Op::Add), 
+                Token::Literal(Literal::Int(2)), 
+                Token::Op(Op::Mul), 
+                Token::Literal(Literal::Int(10)), 
+                Token::NewLine
+            ] => {}
             x => panic!("doesn't match {:?}", x),
         }
     }
 
     #[test]
     fn test_tokenize_range() {
-        match tokenize("0..5").as_deref() {
-            Ok(
-                [Token::Literal(Literal::Int(0)), Token::Op(Op::Range), Token::Literal(Literal::Int(5)), Token::NewLine],
-            ) => {}
+        match &tok("0..5")[..] {
+            [Token::Literal(Literal::Int(0)), Token::Op(Op::Range), Token::Literal(Literal::Int(5)), Token::NewLine] =>
+                {}
             x => panic!("doesn't match {:?}", x),
         }
     }
 
     #[test]
     fn test_tokenize_dict() {
-        match tokenize("{'hello' : 'world'}").as_deref() {
-            Ok(
-                [Token::Punc(Punc::BracketLeft), Token::Literal(Literal::String(a)), Token::Punc(Punc::Colon), Token::Literal(Literal::String(b)), Token::Punc(Punc::BracketRight), Token::NewLine],
-            ) => {
+        match &tok("{'hello' : 'world'}")[..] {
+            #[rustfmt::skip]
+            [
+                Token::Punc(Punc::BracketLeft),
+                Token::Literal(Literal::String(a)), 
+                Token::Punc(Punc::Colon), 
+                Token::Literal(Literal::String(b)), 
+                Token::Punc(Punc::BracketRight), 
+                Token::NewLine
+            ] => {
                 if a != "hello" || b != "world" {
                     panic!(
                         "expected map to contain 'hello' : 'world', contains '{}' : '{}'",

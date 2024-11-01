@@ -31,15 +31,27 @@ impl<'a> Characters<'a> {
 
     pub fn match_exact(&self, s: &str) -> Option<Skip> {
         if self.view[self.consumed..].starts_with(s) {
-            Some(Skip{consumed: self.consumed, skip: s.len()})
+            Some(Skip {
+                consumed: self.consumed,
+                skip: s.len(),
+            })
         } else {
             None
         }
     }
 
-    pub fn skip(&mut self, s : Skip) {
-        if self.consumed == s.consumed {
-            self.consumed += s.skip;
+    pub fn skip(&mut self, skip: Skip, ignore_last: Option<char>) {
+        if self.consumed == skip.consumed {
+            self.consumed += skip.skip;
+            if let Some(ignore_last) = ignore_last {
+                let s = &self.view[self.consumed - ignore_last.len_utf8()..self.consumed];
+                let last_char = s.chars().next();
+                if last_char == Some(ignore_last) {
+                    self.consumed -= ignore_last.len_utf8();
+                } else {
+                    panic!("`ignore_last` did not contain the correct character expected {:?} actual {:?}", Some(ignore_last), last_char);
+                }
+            }
             self.chars = self.view[self.consumed..].chars();
         } else {
             panic!("invalid skip");
@@ -47,11 +59,14 @@ impl<'a> Characters<'a> {
     }
 
     pub fn get_skip(&self) -> Skip {
-        Skip { consumed: 0, skip : self.consumed }
+        Skip {
+            consumed: 0,
+            skip: self.consumed,
+        }
     }
 }
 
 pub struct Skip {
-    pub consumed : usize,
-    pub skip : usize
+    consumed: usize,
+    skip: usize,
 }
