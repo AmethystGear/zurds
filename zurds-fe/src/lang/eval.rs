@@ -17,6 +17,13 @@ impl<'a> ValOrRef<'a> {
             ValOrRef::Ref(val) => (*val).clone(),
         }
     }
+
+    fn get(&mut self) -> &mut Val {
+        match self {
+            ValOrRef::Val(val) => val,
+            ValOrRef::Ref(val) => *val,
+        }
+    }
 }
 
 fn eval_expr<'a>(
@@ -76,43 +83,32 @@ fn eval_expr<'a>(
                         .iter()
                         .map(|expr| eval_expr(expr, ctx).map(|x| x.resolve()))
                         .collect();
-                    let left_val = eval_expr(left, ctx)?;
-                    Ok(ValOrRef::Val(match (left_val, &ident[..], &args?[..]) {
-                        (ValOrRef::Val(Val::Dict(dict)), "has_key", [Val::String(s)]) => {
+                    let mut left_val = eval_expr(left, ctx)?;
+                    Ok(ValOrRef::Val(match (left_val.get(), &ident[..], &args?[..]) {
+                        (Val::Dict(dict), "has_key", [Val::String(s)]) => {
                             Val::Bool(dict.contains_key(s))
                         }
-                        (ValOrRef::Ref(Val::Dict(dict)), "has_key", [Val::String(s)]) => {
-                            Val::Bool(dict.contains_key(s))
-                        }
-                        (ValOrRef::Val(Val::List(mut list)), "push", [val]) => {
-                            list.push(val.clone());
-                            Val::Unit
-                        }
-                        (ValOrRef::Ref(Val::List(list)), "push", [val]) => {
-                            list.push(val.clone());
-                            Val::Unit
-                        }
-                        (ValOrRef::Val(Val::Dict(mut dict)), "remove", [Val::String(s)]) => {
+                        (Val::Dict(dict), "remove", [Val::String(s)]) => {
                             dict.remove(s);
                             Val::Unit
                         }
-                        (ValOrRef::Ref(Val::Dict(dict)), "remove", [Val::String(s)]) => {
-                            dict.remove(s);
+                        (Val::Dict(dict), "keys", []) => {
+                            Val::List(dict.keys().into_iter().map(|x| Val::String(x.clone())).collect())
+                        }
+                        (Val::List(list), "push", [val]) => {
+                            list.push(val.clone());
                             Val::Unit
-                        },
-                        (ValOrRef::Val(Val::Dict(dict)), "keys", []) => {
-                            Val::List(dict.keys().into_iter().map(|x| Val::String(x.clone())).collect())
                         }
-                        (ValOrRef::Ref(Val::Dict(dict)), "keys", []) => {
-                            Val::List(dict.keys().into_iter().map(|x| Val::String(x.clone())).collect())
+                        (Val::List(list), "remove", [Val::Int(i)]) => {
+                            let out_of_bounds = || EvalError("index out of bounds".to_string());
+                            let i = usize::try_from(*i).map_err(|_| out_of_bounds())?;
+                            list.remove(i);
+                            Val::Unit
                         }
-                        (ValOrRef::Val(Val::String(s)), "has", [Val::String(sub)]) => {
+                        (Val::String(s), "has", [Val::String(sub)]) => {
                             Val::Bool(s.contains(sub))
                         }
-                        (ValOrRef::Ref(Val::String(s)), "has", [Val::String(sub)]) => {
-                            Val::Bool(s.contains(sub))
-                        }
-                        (val, "str", []) => Val::String(format!("{}", val.resolve())),
+                        (val, "str", []) => Val::String(format!("{}", val)),
                         (_, fn_name, args) => Err(EvalError(format!(
                             "cannot invoke '{}' with args {:?}",
                             fn_name, args
