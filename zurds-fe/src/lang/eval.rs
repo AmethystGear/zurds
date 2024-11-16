@@ -116,11 +116,11 @@ fn eval_expr<'a>(
                             (Val::String(s), "int", []) => {
                                 Val::Int(s.parse().map_err(|e| EvalError(format!("{}", e)))?)
                             }
-                            (Val::String(s), "int?", []) => Val::Bool(s.parse::<i64>().is_err()),
+                            (Val::String(s), "int?", []) => Val::Bool(s.parse::<i64>().is_ok()),
                             (Val::String(s), "flt", []) => {
                                 Val::Float(s.parse().map_err(|e| EvalError(format!("{}", e)))?)
                             }
-                            (Val::String(s), "flt?", []) => Val::Bool(s.parse::<f64>().is_err()),
+                            (Val::String(s), "flt?", []) => Val::Bool(s.parse::<f64>().is_ok()),
                             (Val::Int(i), "flt", []) => Val::Float(*i as f64),
                             (Val::Float(f), "round", []) => Val::Int(f.round() as i64),
                             (Val::Float(f), "ciel", []) => Val::Int(f.ceil() as i64),
