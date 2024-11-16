@@ -1,8 +1,8 @@
-use std::slice::Iter;
 use super::{
     err::{LangErr, Loc},
     lexer::{self, AssignOp, Token},
 };
+use std::slice::Iter;
 
 #[derive(Debug)]
 pub enum SingleOp {
@@ -36,19 +36,19 @@ pub enum Expr {
 #[derive(Debug)]
 pub enum Field {
     Var(lexer::Ident),
-    Index(Expr)
-}   
+    Index(Expr),
+}
 
 #[derive(Debug)]
 pub enum Assign {
     Var(lexer::Ident),
-    Field(Expr, Field)
+    Field(Expr, Field),
 }
 
 #[derive(Debug)]
 pub enum Statement {
     If(Expr, Vec<Statement>, Vec<Statement>),
-    For(lexer::Ident, Expr, Vec<Statement>),
+    For(lexer::Ident, Option<lexer::Ident>, Expr, Vec<Statement>),
     Loop(Vec<Statement>),
     Assign(Assign, Option<AssignOp>, Expr),
     Expr(Expr),
@@ -129,7 +129,7 @@ fn parse_primary(tokens: &mut Iter<'_, (lexer::Token, Loc)>) -> Result<Expr, Lan
                                 tokens.next();
                                 break;
                             }
-                            None => Err(LangErr{
+                            None => Err(LangErr {
                                 loc: *loc,
                                 err: "unmatched '('".to_string(),
                             })?,
@@ -140,7 +140,7 @@ fn parse_primary(tokens: &mut Iter<'_, (lexer::Token, Loc)>) -> Result<Expr, Lan
                                     Some(lexer::Token::Punc(lexer::Punc::Comma)) => {
                                         tokens.next();
                                     }
-                                    _ => Err(LangErr{
+                                    _ => Err(LangErr {
                                         loc: *loc,
                                         err: "expected ')' or ','".to_string(),
                                     })?,
@@ -152,12 +152,17 @@ fn parse_primary(tokens: &mut Iter<'_, (lexer::Token, Loc)>) -> Result<Expr, Lan
                 }
                 _ => Ok(Expr::Var(ident.clone())),
             },
-            lexer::Token::Kw(lexer::Kw::Not) => {
-                Ok(Expr::SingleOp(SingleOp::Not, Box::new(parse_primary(tokens)?)))
-            }
+            lexer::Token::Kw(lexer::Kw::Not) => Ok(Expr::SingleOp(
+                SingleOp::Not,
+                Box::new(parse_primary(tokens)?),
+            )),
             lexer::Token::Punc(lexer::Punc::ParenLeft) => {
                 let expr = parse_expr(tokens)?;
-                expect!(tokens, lexer::Token::Punc(lexer::Punc::ParenRight), "unmatched '('")?;
+                expect!(
+                    tokens,
+                    lexer::Token::Punc(lexer::Punc::ParenRight),
+                    "unmatched '('"
+                )?;
                 Ok(expr)
             }
             lexer::Token::Punc(lexer::Punc::SqrBracketLeft) => {
@@ -168,7 +173,7 @@ fn parse_primary(tokens: &mut Iter<'_, (lexer::Token, Loc)>) -> Result<Expr, Lan
                             tokens.next();
                             break;
                         }
-                        None => Err(LangErr{
+                        None => Err(LangErr {
                             loc: *loc,
                             err: "unmatched '['".to_string(),
                         })?,
@@ -179,7 +184,7 @@ fn parse_primary(tokens: &mut Iter<'_, (lexer::Token, Loc)>) -> Result<Expr, Lan
                                 Some(lexer::Token::Punc(lexer::Punc::Comma)) => {
                                     tokens.next();
                                 }
-                                _ => Err(LangErr{
+                                _ => Err(LangErr {
                                     loc: *loc,
                                     err: "expected ']' or ','".to_string(),
                                 })?,
@@ -197,13 +202,17 @@ fn parse_primary(tokens: &mut Iter<'_, (lexer::Token, Loc)>) -> Result<Expr, Lan
                             tokens.next();
                             break;
                         }
-                        None => Err(LangErr{
+                        None => Err(LangErr {
                             loc: *loc,
                             err: "unmatched '{'".to_string(),
                         })?,
                         _ => {
                             let key = parse_expr(tokens)?;
-                            expect!(tokens, lexer::Token::Punc(lexer::Punc::Colon), "expected ':' between key and value in dict")?;
+                            expect!(
+                                tokens,
+                                lexer::Token::Punc(lexer::Punc::Colon),
+                                "expected ':' between key and value in dict"
+                            )?;
                             let value = parse_expr(tokens)?;
                             args.push((key, value));
                             match tokens.clone().next().map(|(x, _)| x) {
@@ -211,7 +220,7 @@ fn parse_primary(tokens: &mut Iter<'_, (lexer::Token, Loc)>) -> Result<Expr, Lan
                                 Some(lexer::Token::Punc(lexer::Punc::Comma)) => {
                                     tokens.next();
                                 }
-                                _ => Err(LangErr{
+                                _ => Err(LangErr {
                                     loc: *loc,
                                     err: "expected '}' or ','".to_string(),
                                 })?,
@@ -221,7 +230,7 @@ fn parse_primary(tokens: &mut Iter<'_, (lexer::Token, Loc)>) -> Result<Expr, Lan
                 }
                 Ok(Expr::Dict(args))
             }
-            x => Err(LangErr{
+            x => Err(LangErr {
                 loc: *loc,
                 err: format!("expected expression here, found {:?}", x),
             })?,
@@ -235,7 +244,9 @@ enum ExprOrBinOp {
     BinOp(BinOp),
 }
 
-fn parse_primary_operator_list<'a>(tokens: &mut Iter<'_, (lexer::Token, Loc)>) -> Result<Vec<ExprOrBinOp>, LangErr> {
+fn parse_primary_operator_list<'a>(
+    tokens: &mut Iter<'_, (lexer::Token, Loc)>,
+) -> Result<Vec<ExprOrBinOp>, LangErr> {
     let mut mix = vec![];
     loop {
         let primary = parse_primary(tokens)?;
@@ -310,8 +321,10 @@ fn parse_expr_from_primary_operator_list(mut mix: Vec<ExprOrBinOp>) -> Result<Ex
                                 Box::new(rhs),
                             )));
                         }
-                        (Some(ExprOrBinOp::Expr(_)),Some(ExprOrBinOp::BinOp(_)), None) => panic!("bug"),
-                        _ => panic!("BUG! ")
+                        (Some(ExprOrBinOp::Expr(_)), Some(ExprOrBinOp::BinOp(_)), None) => {
+                            panic!("bug")
+                        }
+                        _ => panic!("BUG! "),
                     }
                     collapse = vec![];
                 }
@@ -354,9 +367,9 @@ pub fn parse(
             indentation = expected_indentation - real_indentation;
             break;
         } else if real_indentation > expected_indentation {
-            Err(LangErr{
+            Err(LangErr {
                 loc: *tokens.next().map(|(_, x)| x).unwrap(),
-                err: "invalid indentation".to_string()
+                err: "invalid indentation".to_string(),
             })?
         } else {
             for _ in 0..real_indentation {
@@ -449,27 +462,28 @@ fn parse_statement(
                 let assign = match assignment_expr {
                     Expr::BinOp(left, BinOp::Op(lexer::Op::Access), right) => match *right {
                         Expr::List(mut vec) => match (vec.pop(), vec.pop()) {
-                            (Some(expr), None) => {
-                                Ok(Assign::Field(*left, Field::Index(expr)))
-                            },
-                            _ => err
+                            (Some(expr), None) => Ok(Assign::Field(*left, Field::Index(expr))),
+                            _ => err,
                         },
                         Expr::Var(ident) => Ok(Assign::Field(*left, Field::Var(ident))),
-                        _ => err
+                        _ => err,
                     },
                     Expr::Var(ident) => Ok(Assign::Var(ident)),
-                    _ => err
+                    _ => err,
                 }?;
                 let operator = expect!(tokens, Token::Assign(x) => x,
                     "expected one of '=,+=,-=,*=,/=' here... do you have multiple expressions before the '='?")?;
                 let evaluation_expr = parse_expr(&mut tokens)?;
-                (Statement::Assign(assign, operator.clone(), evaluation_expr), 0)
+                (
+                    Statement::Assign(assign, operator.clone(), evaluation_expr),
+                    0,
+                )
             } else {
                 let (token, loc) = token_loc;
                 match token {
                     lexer::Token::Kw(lexer::Kw::And | lexer::Kw::Or | lexer::Kw::Not) => None,
                     lexer::Token::Kw(_) => tokens.next(),
-                    _ => None
+                    _ => None,
                 };
                 match token {
                     lexer::Token::Kw(kw) => match kw {
@@ -505,12 +519,18 @@ fn parse_statement(
                         lexer::Kw::For => {
                             expect_newline = false;
                             let var = expect!(tokens, lexer::Token::Ident(x) => x, "expected variable, e.g. `for x in 0..10:`...")?;
+                            let second_var = match tokens.clone().next() {
+                                Some((lexer::Token::Punc(lexer::Punc::Comma), _)) => {
+                                    Some(expect!(tokens, lexer::Token::Ident(x) => x, "expected variable after comma, e.g. `for x, y in dictionary:`...")?.clone())
+                                },
+                                _ => None,
+                            };
                             expect!(tokens, lexer::Token::Kw(lexer::Kw::In), "expected 'in', e.g. `for x in 0..10:`...")?;
                             let expr = parse_expr(tokens)?;
                             expect!(tokens, lexer::Token::Punc(lexer::Punc::Colon), "expected ':' after loop expression, e.g. `for x in 0..10:`...")?;
                             expect!(tokens, lexer::Token::NewLine, "expected newline/enter after ':'")?;
                             let (block, n) = parse(indentation + 1, tokens)?;
-                            (Statement::For(var.to_string(), expr, block), n - 1)
+                            (Statement::For(var.to_string(), second_var, expr, block), n - 1)
                         }
                         lexer::Kw::Loop => {
                             expect_newline = false;
@@ -554,7 +574,7 @@ fn parse_statement(
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_parse_expr() {
         let tokens = lexer::tokenize("(not is_valid() and opponent != \"harry\" + 5)").unwrap();

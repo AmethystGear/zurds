@@ -49,12 +49,12 @@ impl<'a> Characters<'a> {
                 if last_char == Some(ignore_last) {
                     self.consumed -= ignore_last.len_utf8();
                 } else {
-                    panic!("`ignore_last` did not contain the correct character expected {:?} actual {:?}", Some(ignore_last), last_char);
+                    panic!("bug: `ignore_last` did not contain the correct character expected {:?} actual {:?}", Some(ignore_last), last_char);
                 }
             }
             self.chars = self.view[self.consumed..].chars();
         } else {
-            panic!("invalid skip");
+            panic!("bug: invalid skip");
         }
     }
 

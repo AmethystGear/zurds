@@ -30,14 +30,23 @@ impl Messenger {
     pub async fn send(
         &self,
         message: Message,
-    ) -> Result<
-        Result<Result<(), std::io::Error>, tokio::sync::oneshot::error::RecvError>,
-        mpsc::error::SendError<(Message, oneshot::Sender<Result<(), std::io::Error>>)>,
-    > {
+    ) -> Result<(), MessagingError> {
         let (tx, rx) = oneshot::channel();
-        self.0.send((message, tx))?;
-        Ok(rx.await)
+        if let Err(e) = self.0.send((message, tx)) {
+            return Err(MessagingError::Send(e));
+        }
+        match rx.await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(MessagingError::Io(e)),
+            Err(e) => Err(MessagingError::Recv(e)),
+        }
     }
+}
+
+pub enum MessagingError {
+    Io(std::io::Error),
+    Send(mpsc::error::SendError<(Message, oneshot::Sender<Result<(), std::io::Error>>)>),
+    Recv(tokio::sync::oneshot::error::RecvError)
 }
 
 fn message_loop(

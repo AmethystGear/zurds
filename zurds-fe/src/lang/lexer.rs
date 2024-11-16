@@ -267,7 +267,7 @@ fn brk(chars: &Characters<'_>) -> bool {
 fn match_ident(chars: &mut Characters<'_>) -> Option<String> {
     let mut first = true;
     while let Some(c) = chars.clone().next() {
-        if !(c == '_' || (c == '@' && first) || c.is_ascii_alphanumeric()) {
+        if !(c == '_' || (c == '@' && first) || c.is_ascii_alphanumeric() || c == '?') {
             break;
         }
         first = false;
@@ -281,17 +281,6 @@ fn match_ident(chars: &mut Characters<'_>) -> Option<String> {
 }
 
 const INDENT_SIZE: usize = 4;
-#[rustfmt::skip]
-const MATCHERS : [fn(Characters<'_>) -> (Result<Option<Token>, (String, usize)>, Characters<'_>); 8] = [
-    |mut chars| (match_flt(&mut chars).map(|op| op.map(|flt| Token::Literal(Literal::Float(flt)))), chars),
-    |mut chars| (match_int(&mut chars).map(|op| op.map(|int| Token::Literal(Literal::Int(int)))), chars),
-    |mut chars| (match_str(&mut chars).map(|op| op.map(|s| Token::Literal(Literal::String(s)))), chars),
-    |mut chars| (Ok(match_exact(OP, &mut chars).map(|op| op)), chars),
-    |mut chars| (Ok(match_exact(PUNC, &mut chars).map(|punc: Punc| Token::Punc(punc))), chars),
-    |mut chars| (Ok(match_kw(&mut chars).map(|kw| Token::Kw(kw))), chars),
-    |mut chars| (Ok(match_bool(&mut chars).map(|bool| Token::Literal(Literal::Bool(bool)))), chars),
-    |mut chars| (Ok(match_ident(&mut chars).map(|ident| Token::Ident(ident))), chars)
-];
 pub fn tokenize(s: &str) -> Result<Vec<(Token, Loc)>, LangErr> {
     let mut col = 0;
     let mut line = 1;
@@ -350,6 +339,18 @@ pub fn tokenize(s: &str) -> Result<Vec<(Token, Loc)>, LangErr> {
             line += 1;
             continue;
         }
+
+        #[rustfmt::skip]
+        const MATCHERS : [fn(Characters<'_>) -> (Result<Option<Token>, (String, usize)>, Characters<'_>); 8] = [
+            |mut chars| (match_flt(&mut chars).map(|op| op.map(|flt| Token::Literal(Literal::Float(flt)))), chars),
+            |mut chars| (match_int(&mut chars).map(|op| op.map(|int| Token::Literal(Literal::Int(int)))), chars),
+            |mut chars| (match_str(&mut chars).map(|op| op.map(|s| Token::Literal(Literal::String(s)))), chars),
+            |mut chars| (Ok(match_exact(OP, &mut chars).map(|op| op)), chars),
+            |mut chars| (Ok(match_exact(PUNC, &mut chars).map(|punc: Punc| Token::Punc(punc))), chars),
+            |mut chars| (Ok(match_kw(&mut chars).map(|kw| Token::Kw(kw))), chars),
+            |mut chars| (Ok(match_bool(&mut chars).map(|bool| Token::Literal(Literal::Bool(bool)))), chars),
+            |mut chars| (Ok(match_ident(&mut chars).map(|ident| Token::Ident(ident))), chars)
+        ];
 
         let mut characters = None;
         for matcher in MATCHERS {

@@ -84,36 +84,53 @@ fn eval_expr<'a>(
                         .map(|expr| eval_expr(expr, ctx).map(|x| x.resolve()))
                         .collect();
                     let mut left_val = eval_expr(left, ctx)?;
-                    Ok(ValOrRef::Val(match (left_val.get(), &ident[..], &args?[..]) {
-                        (Val::Dict(dict), "has_key", [Val::String(s)]) => {
-                            Val::Bool(dict.contains_key(s))
-                        }
-                        (Val::Dict(dict), "remove", [Val::String(s)]) => {
-                            dict.remove(s);
-                            Val::Unit
-                        }
-                        (Val::Dict(dict), "keys", []) => {
-                            Val::List(dict.keys().into_iter().map(|x| Val::String(x.clone())).collect())
-                        }
-                        (Val::List(list), "push", [val]) => {
-                            list.push(val.clone());
-                            Val::Unit
-                        }
-                        (Val::List(list), "remove", [Val::Int(i)]) => {
-                            let out_of_bounds = || EvalError("index out of bounds".to_string());
-                            let i = usize::try_from(*i).map_err(|_| out_of_bounds())?;
-                            list.remove(i);
-                            Val::Unit
-                        }
-                        (Val::String(s), "has", [Val::String(sub)]) => {
-                            Val::Bool(s.contains(sub))
-                        }
-                        (val, "str", []) => Val::String(format!("{}", val)),
-                        (_, fn_name, args) => Err(EvalError(format!(
-                            "cannot invoke '{}' with args {:?}",
-                            fn_name, args
-                        )))?,
-                    }))
+                    Ok(ValOrRef::Val(
+                        match (left_val.get(), &ident[..], &args?[..]) {
+                            (Val::Dict(dict), "contains_key", [Val::String(s)]) => {
+                                Val::Bool(dict.contains_key(s))
+                            }
+                            (Val::Dict(dict), "remove", [Val::String(s)]) => {
+                                dict.remove(s);
+                                Val::Unit
+                            }
+                            (Val::Dict(dict), "keys", []) => Val::List(
+                                dict.keys()
+                                    .into_iter()
+                                    .map(|x| Val::String(x.clone()))
+                                    .collect(),
+                            ),
+                            (Val::List(list), "push", [val]) => {
+                                list.push(val.clone());
+                                Val::Unit
+                            }
+                            (Val::List(list), "remove", [Val::Int(i)]) => {
+                                let out_of_bounds = || EvalError("index out of bounds".to_string());
+                                let i = usize::try_from(*i).map_err(|_| out_of_bounds())?;
+                                list.remove(i);
+                                Val::Unit
+                            }
+                            (Val::String(s), "contains", [Val::String(sub)]) => {
+                                Val::Bool(s.contains(sub))
+                            }
+                            (val, "str", []) => Val::String(format!("{}", val)),
+                            (Val::String(s), "int", []) => {
+                                Val::Int(s.parse().map_err(|e| EvalError(format!("{}", e)))?)
+                            }
+                            (Val::String(s), "int?", []) => Val::Bool(s.parse::<i64>().is_err()),
+                            (Val::String(s), "flt", []) => {
+                                Val::Float(s.parse().map_err(|e| EvalError(format!("{}", e)))?)
+                            }
+                            (Val::String(s), "flt?", []) => Val::Bool(s.parse::<f64>().is_err()),
+                            (Val::Int(i), "flt", []) => Val::Float(*i as f64),
+                            (Val::Float(f), "round", []) => Val::Int(f.round() as i64),
+                            (Val::Float(f), "ciel", []) => Val::Int(f.ceil() as i64),
+                            (Val::Float(f), "floor", []) => Val::Int(f.floor() as i64),
+                            (_, fn_name, args) => Err(EvalError(format!(
+                                "cannot invoke '{}' with args {:?}",
+                                fn_name, args
+                            )))?,
+                        },
+                    ))
                 }
                 Expr::List(vec) => {
                     let index = match (vec.get(0), vec.get(1)) {
@@ -255,24 +272,48 @@ pub fn eval(program: &Vec<Statement>, ctx: &mut HashMap<String, Val>) -> Result<
                     ))))?;
                 }
             }
-            Statement::For(var, expr, body) => {
+            Statement::For(var, second_var, expr, body) => {
                 let iterable = eval_expr(expr, ctx)
                     .map_err(|e| ControlFlow::Error(e))?
                     .resolve();
-                let values: Box<dyn Iterator<Item = Val>> = match iterable {
-                    Val::List(elems) => Box::new(elems.into_iter()),
-                    Val::Range(min, max) => Box::new((min..max).into_iter().map(|i| Val::Int(i))),
-                    _ => Err(ControlFlow::Error(EvalError(format!(
-                        "can't iterate over {:?}",
-                        iterable
-                    ))))?,
-                };
-                for val in values {
-                    ctx.insert(var.clone(), val);
-                    match eval(body, ctx) {
-                        Err(ControlFlow::Break) => break,
-                        Err(ControlFlow::Error(e)) => return Err(ControlFlow::Error(e)),
-                        Err(ControlFlow::Continue) | Ok(()) => {}
+                if let Some(second_var) = second_var {
+                    match iterable {
+                        Val::Dict(elems) => {
+                            for (k, v) in elems.into_iter().map(|(k, v)| (Val::String(k), v)) {
+                                ctx.insert(var.clone(), k);
+                                ctx.insert(second_var.clone(), v);
+                                match eval(body, ctx) {
+                                    Err(ControlFlow::Break) => break,
+                                    Err(ControlFlow::Error(e)) => {
+                                        return Err(ControlFlow::Error(e))
+                                    }
+                                    Err(ControlFlow::Continue) | Ok(()) => {}
+                                }
+                            }
+                        }
+                        _ => Err(ControlFlow::Error(EvalError(format!(
+                            "can't iterate over {:?}",
+                            iterable
+                        ))))?,
+                    };
+                } else {
+                    let values: Box<dyn Iterator<Item = Val>> = match iterable {
+                        Val::List(elems) => Box::new(elems.into_iter()),
+                        Val::Range(min, max) => {
+                            Box::new((min..max).into_iter().map(|i| Val::Int(i)))
+                        }
+                        _ => Err(ControlFlow::Error(EvalError(format!(
+                            "can't iterate over {:?}",
+                            iterable
+                        ))))?,
+                    };
+                    for val in values {
+                        ctx.insert(var.clone(), val);
+                        match eval(body, ctx) {
+                            Err(ControlFlow::Break) => break,
+                            Err(ControlFlow::Error(e)) => return Err(ControlFlow::Error(e)),
+                            Err(ControlFlow::Continue) | Ok(()) => {}
+                        }
                     }
                 }
             }
@@ -429,4 +470,4 @@ fn handle_operator(a: &Val, op: &super::parser::BinOp, b: &Val) -> Result<Val, E
 }
 
 #[derive(Debug)]
-struct EvalError(String);
+pub struct EvalError(String);

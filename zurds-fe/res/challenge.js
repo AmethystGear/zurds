@@ -171,14 +171,12 @@ async function withPlayerId(fn) {
     }
 }
 
-setupEventSource(() => { })
-
 document.addEventListener('mousemove', (event) => {
-    let screenWidth = window.innerWidth;
-    let mouseX = event.clientX;
-    let x = (mouseX < screenWidth / 2) ? 45 : 30
     let leftSection = document.querySelector('.left-section')
+    let rightSection = document.querySelector('.right-section')
+    let x = rightSection.matches(':hover') ? 30 : 45
     leftSection.style.transition = 'clip-path 0.25s ease-in-out'
     leftSection.style.clipPath = `polygon(0 0, ${x + 20}% 0, ${x}% 100%, 0% 100%)`
 })
-document.querySelector('.challenge-text').addEventListener('click', vend)  
+document.querySelector('.challenge-text').addEventListener('click', vend)
+document.getElementById('acceptButton').addEventListener('click', accept)
