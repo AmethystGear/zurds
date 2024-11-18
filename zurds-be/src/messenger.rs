@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::MutexGuard, time::Duration};
 
 use rand::{thread_rng, Rng};
 use tokio::{
@@ -27,26 +27,23 @@ impl Messenger {
     }
 
     /// Messages will be queued in an unbounded channel, and sent in that order on the provided stream.
-    pub async fn send(
-        &self,
-        message: Message,
-    ) -> Result<(), MessagingError> {
+    pub async fn send(&self, message: Message) -> Result<(), MessagingError> {
         let (tx, rx) = oneshot::channel();
-        if let Err(e) = self.0.send((message, tx)) {
-            return Err(MessagingError::Send(e));
-        }
+        self.0
+            .send((message, tx))
+            .map_err(|_| MessagingError::MessageLoopUnavailable)?;
         match rx.await {
             Ok(Ok(())) => Ok(()),
             Ok(Err(e)) => Err(MessagingError::Io(e)),
-            Err(e) => Err(MessagingError::Recv(e)),
+            Err(_) => Err(MessagingError::MessageLoopUnavailable),
         }
     }
 }
 
+#[derive(Debug)]
 pub enum MessagingError {
     Io(std::io::Error),
-    Send(mpsc::error::SendError<(Message, oneshot::Sender<Result<(), std::io::Error>>)>),
-    Recv(tokio::sync::oneshot::error::RecvError)
+    MessageLoopUnavailable
 }
 
 fn message_loop(
@@ -58,7 +55,7 @@ fn message_loop(
     const MIN_TIMEOUT: u64 = 30;
     const MAX_TIMEOUT: u64 = 60;
     tokio::spawn(async move {
-        let mut id = 0;
+        let mut id: u64 = 0;
         loop {
             // randomized timeout, this should lower contention by spreading out
             // when we (may) need to ping the player and/or take the table lock.
@@ -76,9 +73,16 @@ fn message_loop(
                         Some(tx),
                     )
                 }
-                Ok(None) => panic!("mpsc sender closed"),
+                Ok(None) => {
+                    // mpsc sender closed, that means all `Messenger` objects have been dropped, which means
+                    // the application has no need to talk to this player anymore. 
+                    // Delete their metadata/any pairings from the table, and end the message loop.
+                    println!("All `Messenger` objects for player {} have been dropped. Deleting player metadata...", player_id);
+                    delete_player_metadata(table.lock(), &player_id);
+                    return;
+                },
                 Err(_) => {
-                    // timed out, which means there's nothing we need to send the player right now.
+                    // timed out, which means there's nothing the application wants to send the player right now.
                     // let's ping the player to see if they're still alive...
                     (format!("id: {}\nevent: ping\ndata: {{}}\n\n", id), None)
                 }
@@ -91,30 +95,38 @@ fn message_loop(
             let res = stream.write_all(content.as_bytes()).await;
             let err = res.is_err();
             if let Some(tx) = tx {
-                tx.send(res).expect("oneshot reciever closed");
+                if let Err(_) = tx.send(res) {
+                    // The application was trying to send a message to the player, and it sent the message,
+                    // but then the reciever was dropped. This means we have a bug in `Messenger` send()
+                    panic!("bug: oneshot reciever was dropped before we could return the result of writing to the tcp stream!")
+                }
             }
             if err {
-                // we couldn't send to the player, so let's get rid of their data from the table.
-                println!("deleting player: {}", player_id);
-                let mut table = table.lock();
-                table.messengers.remove(&player_id);
-                if let Some(token) = table.player_to_token.remove(&player_id) {
-                    if let Some(Players::Pair(a, b)) = table.token_to_players.remove(&token) {
-                        if a == player_id {
-                            table.player_to_token.remove(&b);
-                        } else {
-                            table.player_to_token.remove(&a);
-                        }
-                    }
-                }
-                break;
+                // We couldn't send the message to the player, so assume that they have disconnected.
+                // Delete their metadata/any pairings from the table, and end the message loop.
+                println!("Could not send message to player {}. Deleting player metadata...", player_id);
+                delete_player_metadata(table.lock(), &player_id);
+                return;
             }
             id += 1;
         }
     });
 }
 
-/// represents an SSE
+fn delete_player_metadata(mut table: MutexGuard<'_, Table>, player_id: &PlayerId) {
+    table.messengers.remove(player_id);
+    if let Some(token) = table.player_to_token.remove(player_id) {
+        if let Some(Players::Pair(a, b)) = table.token_to_players.remove(&token) {
+            if &a == player_id {
+                table.player_to_token.remove(&b);
+            } else {
+                table.player_to_token.remove(&a);
+            }
+        }
+    }
+}
+
+/// represents an SSE (Server Side Event)
 pub struct Message {
     title: String,
     content: serde_json::Value,
@@ -123,7 +135,7 @@ pub struct Message {
 impl Message {
     /// constructs an SSE given the title and content. Any newlines in `title` are removed
     /// (SSE uses newlines as delimiters).
-    pub fn new(title: &str, content: serde_json::Value) -> Self {
+    pub fn new(title: &'static str, content: serde_json::Value) -> Self {
         Self {
             title: title.chars().filter(|c| c != &'\n').collect(),
             content,

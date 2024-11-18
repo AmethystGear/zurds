@@ -5,6 +5,7 @@ use super::{
     parser::{BinOp, Expr, Statement},
 };
 
+#[derive(Debug)]
 enum ValOrRef<'a> {
     Val(Val),
     Ref(&'a mut Val),
@@ -471,3 +472,26 @@ fn handle_operator(a: &Val, op: &super::parser::BinOp, b: &Val) -> Result<Val, E
 
 #[derive(Debug)]
 pub struct EvalError(String);
+
+
+#[cfg(test)]
+mod tests {
+    use crate::lang::parser::parse;
+
+    use super::*;
+
+    #[test]
+    fn test_is_int() {
+        let tokens = lexer::tokenize("not 'not a int'.int?()").unwrap();
+        let (statements, _) = parse(&mut tokens.iter()).unwrap();
+        match &statements[..] {
+            [Statement::Expr(expr)] => {
+                match eval_expr(expr, &mut HashMap::new()).unwrap() {
+                    ValOrRef::Val(Val::Bool(false)) => {},
+                    x => panic!("expected `false`, was {:?}", x)
+                }
+            }
+            _ => panic!("expected single expression!")
+        }
+    }
+}

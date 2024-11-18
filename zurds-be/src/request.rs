@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 
+#[derive(Debug)]
 pub struct HttpRequest {
     pub method: String,
     pub path: String,
@@ -61,12 +62,14 @@ pub async fn parse_http_request(
         None
     };
 
-    // Return the parsed request as a struct
-    Ok(HttpRequest {
+    let request = HttpRequest {
         method,
         path,
         http_version,
         headers,
         body,
-    })
+    };
+    println!("{:?}", request);
+    // Return the parsed request as a struct
+    Ok(request)
 }

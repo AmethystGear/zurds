@@ -19,7 +19,6 @@ mod request;
 mod response;
 
 const INDEX: &str = "/index.html";
-const RES: phf::Map<&'static str, &'static [u8]> = incdir::include_dir!("../zurds-fe/res");
 const PKG: phf::Map<&'static str, &'static [u8]> = incdir::include_dir!("../zurds-fe/pkg");
 
 #[tokio::main]
@@ -37,7 +36,9 @@ async fn main() -> Result<(), tokio::io::Error> {
     loop {
         let table = table.clone();
         let (stream, _) = listener.accept().await?;
-        tokio::spawn(async move { handle_connection(stream, table).await });
+        tokio::spawn(async move {
+            println!("{:?}", handle_connection(stream, table).await);
+        });
     }
 }
 
@@ -69,7 +70,7 @@ async fn handle_connection(
                 };
             }
             // error while reading from TcpStream
-            Err(HttpRequestParsingError::Io(err)) => return Err(err),
+            Err(HttpRequestParsingError::Io(e)) => return Err(e),
             // couldn't parse the request
             Err(HttpRequestParsingError::InvalidRequestFormat) => {
                 write_http_response(&http_err!(400), &mut stream).await?
@@ -93,8 +94,9 @@ async fn player(table: ArcMutex<Table>, mut stream: TcpStream) -> Result<(), tok
         .send(Message::new("playerId", json!(player_id)))
         .await
     {
-        Ok(Ok(e)) => e?,
-        _ => return Ok(()),
+        Ok(()) => {} // successfully sent message
+        Err(messenger::MessagingError::Io(e)) => return Err(e), // error while writing to TcpStream
+        Err(_) => return Ok(()) // couldn't send message to message loop
     }
     {
         let mut table = table.lock();
@@ -103,16 +105,12 @@ async fn player(table: ArcMutex<Table>, mut stream: TcpStream) -> Result<(), tok
     Ok(())
 }
 
-// Simple get for getting files from `RES` & `PKG`. Prioritize `RES` over `PKG` if there is a name conflict.
+// Simple get for getting files `PKG` directory.
 async fn get(path: &[&str], stream: &mut TcpStream) -> Result<(), tokio::io::Error> {
-    let response = match (RES.get(&path.join("/")), PKG.get(&path.join("/"))) {
-        (Some(response), _) | (None, Some(response)) => {
+    let response = match PKG.get(&path.join("/")) {
+        Some(response) => {
             let mut headers = HashMap::new();
-            let content_type = match path
-                .last()
-                .map(|x| x.split('.').last())
-                .flatten()
-            {
+            let content_type = match path.last().map(|x| x.split('.').last()).flatten() {
                 Some(ext) => match ext {
                     "html" => Ok("text/html"),
                     "css" => Ok("text/css"),
@@ -124,7 +122,7 @@ async fn get(path: &[&str], stream: &mut TcpStream) -> Result<(), tokio::io::Err
                     "webp" => Ok("image/webp"),
                     "wasm" => Ok("application/wasm"),
                     _ => Err(()),
-                }
+                },
                 _ => Err(()),
             };
 
@@ -283,9 +281,8 @@ async fn msg(
             Err(e) => e,
             Ok((body, messenger)) => {
                 let send = messenger.send(Message::new("msg", body.content)).await;
-
                 match send {
-                    Ok(Ok(Ok(_))) => HttpResponse::json(200, json!({})),
+                    Ok(()) => HttpResponse::json(200, json!({})),
                     err => HttpResponse::json(
                         400,
                         json!({"err" : format!("failed to send message to opponent {:?}", err)}),

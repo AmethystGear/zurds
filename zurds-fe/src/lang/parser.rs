@@ -341,7 +341,11 @@ fn parse_expr<'a>(tokens: &mut Iter<'_, (lexer::Token, Loc)>) -> Result<Expr, La
     parse_expr_from_primary_operator_list(mix)
 }
 
-pub fn parse(
+pub fn parse(tokens: &mut Iter<'_, (lexer::Token, Loc)>) -> Result<(Vec<Statement>, usize), LangErr> {
+    _parse(0, tokens)
+}
+
+fn _parse(
     expected_indentation: usize,
     tokens: &mut Iter<'_, (lexer::Token, Loc)>,
 ) -> Result<(Vec<Statement>, usize), LangErr> {
@@ -495,7 +499,7 @@ fn parse_statement(
                             let condition = parse_expr(tokens)?;
                             expect!(tokens, lexer::Token::Punc(lexer::Punc::Colon), "expected ':' at the end of if condition")?;
                             expect!(tokens, lexer::Token::NewLine, "expected newline/enter after ':'")?;
-                            let (true_case, n) = parse(indentation + 1, tokens)?;
+                            let (true_case, n) = _parse(indentation + 1, tokens)?;
                             let real_indentation = (indentation + 1) - n;
                             match tokens.clone().skip(real_indentation).next() {
                                 Some((lexer::Token::Kw(lexer::Kw::Else), loc)) => {
@@ -510,7 +514,7 @@ fn parse_statement(
                                     }
                                     expect!(tokens, lexer::Token::Punc(lexer::Punc::Colon), "expected ':' after `else`")?;
                                     expect!(tokens, lexer::Token::NewLine, "expected newline/enter after ':'")?;
-                                    let (false_case, n) = parse(indentation + 1, tokens)?;
+                                    let (false_case, n) = _parse(indentation + 1, tokens)?;
                                     (Statement::If(condition, true_case, false_case), n - 1)
                                 }
                                 _ => (Statement::If(condition, true_case, vec![]), n - 1),
@@ -529,14 +533,14 @@ fn parse_statement(
                             let expr = parse_expr(tokens)?;
                             expect!(tokens, lexer::Token::Punc(lexer::Punc::Colon), "expected ':' after loop expression, e.g. `for x in 0..10:`...")?;
                             expect!(tokens, lexer::Token::NewLine, "expected newline/enter after ':'")?;
-                            let (block, n) = parse(indentation + 1, tokens)?;
+                            let (block, n) = _parse(indentation + 1, tokens)?;
                             (Statement::For(var.to_string(), second_var, expr, block), n - 1)
                         }
                         lexer::Kw::Loop => {
                             expect_newline = false;
                             expect!(tokens, lexer::Token::Punc(lexer::Punc::Colon), "expected ':' after loop, e.g. `loop:`...")?;
                             expect!(tokens, lexer::Token::NewLine, "expected newline/enter after ':'")?;
-                            let (block, n) = parse(indentation + 1, tokens)?;
+                            let (block, n) = _parse(indentation + 1, tokens)?;
                             (Statement::Loop(block), n - 1)
                         },
                         lexer::Kw::Else => {
@@ -587,7 +591,7 @@ mod tests {
     fn test_parse_statement() {
         let program = include_str!("../../example.spell");
         let tokens = lexer::tokenize(program).unwrap();
-        let parsed = parse(0, &mut tokens.iter());
+        let parsed = parse(&mut tokens.iter());
         println!("{:?}", parsed);
     }
 
@@ -595,7 +599,7 @@ mod tests {
     fn test_parse_dictionary_access_and_assignment() {
         let program = "{'hello' : {'blah' : [10, 20]}}.['hello'].blah.[0] *= 3";
         let tokens = lexer::tokenize(program).unwrap();
-        let parsed = parse(0, &mut tokens.iter());
+        let parsed = parse(&mut tokens.iter());
         println!("{:?}", parsed);
     }
 
@@ -603,7 +607,7 @@ mod tests {
     fn test_parse_assignment() {
         let program = "x = 5";
         let tokens = lexer::tokenize(program).unwrap();
-        let parsed = parse(0, &mut tokens.iter());
+        let parsed = parse(&mut tokens.iter());
         println!("{:?}", parsed);
     }
 }
