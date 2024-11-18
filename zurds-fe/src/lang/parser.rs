@@ -152,10 +152,6 @@ fn parse_primary(tokens: &mut Iter<'_, (lexer::Token, Loc)>) -> Result<Expr, Lan
                 }
                 _ => Ok(Expr::Var(ident.clone())),
             },
-            lexer::Token::Kw(lexer::Kw::Not) => Ok(Expr::SingleOp(
-                SingleOp::Not,
-                Box::new(parse_primary(tokens)?),
-            )),
             lexer::Token::Punc(lexer::Punc::ParenLeft) => {
                 let expr = parse_expr(tokens)?;
                 expect!(
@@ -463,7 +459,7 @@ fn parse_statement(
                     loc: lineloc,
                     err: "expected assignment to be like 'somevar = <...>' or '<...>.somefield = <...>'  or '<...>.[<some expression>] = <...>'".to_string(),
                 });
-                let assign = match assignment_expr {
+                let assign: Assign = match assignment_expr {
                     Expr::BinOp(left, BinOp::Op(lexer::Op::Access), right) => match *right {
                         Expr::List(mut vec) => match (vec.pop(), vec.pop()) {
                             (Some(expr), None) => Ok(Assign::Field(*left, Field::Index(expr))),
@@ -485,7 +481,7 @@ fn parse_statement(
             } else {
                 let (token, loc) = token_loc;
                 match token {
-                    lexer::Token::Kw(lexer::Kw::And | lexer::Kw::Or | lexer::Kw::Not) => None,
+                    lexer::Token::Kw(lexer::Kw::And | lexer::Kw::Or) => None,
                     lexer::Token::Kw(_) => tokens.next(),
                     _ => None,
                 };
@@ -557,7 +553,7 @@ fn parse_statement(
                                 err: "Found an `in` but it doesn't seem to be part of a for loop.".to_string()
                             })?
                         },
-                        lexer::Kw::Not | lexer::Kw::And | lexer::Kw::Or => (Statement::Expr(parse_expr(&mut tokens)?), 0)
+                        lexer::Kw::And | lexer::Kw::Or => (Statement::Expr(parse_expr(&mut tokens)?), 0)
                     },
                     _ => (Statement::Expr(parse_expr(&mut tokens)?), 0)
                 }
@@ -581,7 +577,7 @@ mod tests {
 
     #[test]
     fn test_parse_expr() {
-        let tokens = lexer::tokenize("(not is_valid() and opponent != \"harry\" + 5)").unwrap();
+        let tokens = lexer::tokenize("(is_valid().not() and opponent != \"harry\" + 5)").unwrap();
         println!("{:?}", tokens);
         let parsed = parse_expr(&mut tokens.iter());
         println!("{:?}", parsed);

@@ -126,6 +126,7 @@ fn eval_expr<'a>(
                             (Val::Float(f), "round", []) => Val::Int(f.round() as i64),
                             (Val::Float(f), "ciel", []) => Val::Int(f.ceil() as i64),
                             (Val::Float(f), "floor", []) => Val::Int(f.floor() as i64),
+                            (Val::Bool(b), "not", []) => Val::Bool(!*b),
                             (_, fn_name, args) => Err(EvalError(format!(
                                 "cannot invoke '{}' with args {:?}",
                                 fn_name, args
@@ -482,7 +483,7 @@ mod tests {
 
     #[test]
     fn test_is_int() {
-        let tokens = lexer::tokenize("not 'not a int'.int?()").unwrap();
+        let tokens = lexer::tokenize("'1'.int?().not()").unwrap();
         let (statements, _) = parse(&mut tokens.iter()).unwrap();
         match &statements[..] {
             [Statement::Expr(expr)] => {
