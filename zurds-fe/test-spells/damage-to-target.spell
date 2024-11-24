@@ -1,0 +1,3 @@
+target = owner.targets.get(0).err('please choose a target')
+possible_targets = @board.players + @board.creatures
+possible_targets.get(target).err('target is not a player or creature').health -= 3

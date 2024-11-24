@@ -4,22 +4,11 @@ use super::{
 };
 use std::slice::Iter;
 
-#[derive(Debug)]
-pub enum SingleOp {
-    Not,
-}
-
 #[derive(Debug, PartialEq, Eq)]
 pub enum BinOp {
     Op(lexer::Op),
     And,
     Or,
-}
-
-#[derive(Debug)]
-pub enum Op {
-    BinOp(BinOp),
-    SingleOp(SingleOp),
 }
 
 #[derive(Debug)]
@@ -29,7 +18,6 @@ pub enum Expr {
     List(Vec<Expr>),
     Dict(Vec<(Expr, Expr)>),
     BinOp(Box<Expr>, BinOp, Box<Expr>),
-    SingleOp(SingleOp, Box<Expr>),
     Var(lexer::Ident),
 }
 
@@ -337,8 +325,8 @@ fn parse_expr<'a>(tokens: &mut Iter<'_, (lexer::Token, Loc)>) -> Result<Expr, La
     parse_expr_from_primary_operator_list(mix)
 }
 
-pub fn parse(tokens: &mut Iter<'_, (lexer::Token, Loc)>) -> Result<(Vec<Statement>, usize), LangErr> {
-    _parse(0, tokens)
+pub fn parse(tokens: &mut Iter<'_, (lexer::Token, Loc)>) -> Result<Vec<Statement>, LangErr> {
+    _parse(0, tokens).map(|(statements, _)| statements)
 }
 
 fn _parse(
@@ -357,12 +345,6 @@ fn _parse(
                 _ => break,
             }
         }
-        println!(
-            "ind: {} {} {:?}",
-            real_indentation,
-            expected_indentation,
-            tokens.clone().skip(real_indentation).next().map(|(x, _)| x)
-        );
         if real_indentation < expected_indentation {
             indentation = expected_indentation - real_indentation;
             break;
@@ -376,12 +358,6 @@ fn _parse(
                 tokens.next();
             }
         }
-        println!(
-            "ind: {} {} {:?}",
-            real_indentation,
-            expected_indentation,
-            tokens.clone().next()
-        );
         match tokens.clone().next().map(|(x, _)| x) {
             None => break,
             Some(lexer::Token::NewLine) => {
@@ -585,7 +561,7 @@ mod tests {
 
     #[test]
     fn test_parse_statement() {
-        let program = include_str!("../../example.spell");
+        let program = include_str!("../../test-spells/example.spell");
         let tokens = lexer::tokenize(program).unwrap();
         let parsed = parse(&mut tokens.iter());
         println!("{:?}", parsed);
