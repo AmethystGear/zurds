@@ -9,7 +9,7 @@ for x in 0..10:
 
 print(dict.str())
 
-for key, value in dict:
+for key,value in dict:
     if dict.[key].has('placeholder'):
         dict.remove(key)
         print("removing " + key)

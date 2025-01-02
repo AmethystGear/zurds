@@ -68,9 +68,9 @@ macro_rules! expect {
     ($tokens:expr, $pattern:pat => $var:ident, $error_msg:expr) => {
         match $tokens.next() {
             Some(($pattern, _)) => Ok($var),
-            Some((_, loc)) => Err(LangErr {
+            Some((x, loc)) => Err(LangErr {
                 loc: *loc,
-                err: $error_msg.to_string(),
+                err: format!("{} found {:?}", $error_msg.to_string(), x),
             }),
             None => Err(LangErr {
                 loc: Loc {
@@ -495,11 +495,19 @@ fn parse_statement(
                         lexer::Kw::For => {
                             expect_newline = false;
                             let var = expect!(tokens, lexer::Token::Ident(x) => x, "expected variable, e.g. `for x in 0..10:`...")?;
-                            let second_var = match tokens.clone().next() {
-                                Some((lexer::Token::Punc(lexer::Punc::Comma), _)) => {
-                                    Some(expect!(tokens, lexer::Token::Ident(x) => x, "expected variable after comma, e.g. `for x, y in dictionary:`...")?.clone())
-                                },
-                                _ => None,
+                            let second_var = {
+                                let mut tokens_clone = tokens.clone();
+                                let second_var = match tokens_clone.next() {
+                                    Some((lexer::Token::Punc(lexer::Punc::Comma), _)) => {
+                                        Some(expect!(tokens_clone, lexer::Token::Ident(x) => x, "expected variable after comma, e.g. `for x, y in dictionary:`...")?.clone())
+                                    },
+                                    _ => None,
+                                };
+                                if second_var.is_some() {
+                                    tokens.next();
+                                    tokens.next();
+                                }
+                                second_var
                             };
                             expect!(tokens, lexer::Token::Kw(lexer::Kw::In), "expected 'in', e.g. `for x in 0..10:`...")?;
                             let expr = parse_expr(tokens)?;
@@ -555,15 +563,15 @@ mod tests {
     fn test_parse_expr() {
         let tokens = lexer::tokenize("(is_valid().not() and opponent != \"harry\" + 5)").unwrap();
         println!("{:?}", tokens);
-        let parsed = parse_expr(&mut tokens.iter());
+        let parsed = parse_expr(&mut tokens.iter()).unwrap();
         println!("{:?}", parsed);
     }
 
     #[test]
-    fn test_parse_statement() {
+    fn test_parse_statements() {
         let program = include_str!("../../test-spells/example.spell");
         let tokens = lexer::tokenize(program).unwrap();
-        let parsed = parse(&mut tokens.iter());
+        let parsed = parse(&mut tokens.iter()).unwrap();
         println!("{:?}", parsed);
     }
 
@@ -571,7 +579,7 @@ mod tests {
     fn test_parse_dictionary_access_and_assignment() {
         let program = "{'hello' : {'blah' : [10, 20]}}.['hello'].blah.[0] *= 3";
         let tokens = lexer::tokenize(program).unwrap();
-        let parsed = parse(&mut tokens.iter());
+        let parsed = parse(&mut tokens.iter()).unwrap();
         println!("{:?}", parsed);
     }
 
@@ -579,7 +587,7 @@ mod tests {
     fn test_parse_assignment() {
         let program = "x = 5";
         let tokens = lexer::tokenize(program).unwrap();
-        let parsed = parse(&mut tokens.iter());
+        let parsed = parse(&mut tokens.iter()).unwrap();
         println!("{:?}", parsed);
     }
 }
