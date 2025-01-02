@@ -671,7 +671,7 @@ mod tests {
     #[test]
     fn test_is_int() {
         let mut empty_ctx = HashMap::new();
-        let tokens = lexer::tokenize("not('1'.int?())").unwrap();
+        let tokens = lexer::tokenize("'1'.int().is_err()").unwrap();
         let statements = parse(&mut tokens.iter()).unwrap();
         match &statements[..] {
             [Statement::Expr(expr)] => {
