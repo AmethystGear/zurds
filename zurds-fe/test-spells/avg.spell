@@ -10,21 +10,4 @@ for data in dataset:
     for n in data.nums:
         sum += n
     
-    data.['avg'] = sum.flt() / data.nums.len().flt()
-
-
-things = [{}, {}, {}]
-
-x = true
-for thing in things:
-    if x:
-        thing.insert('hmm', 5)
-    else:
-        thing.insert('blah', 6)
-
-    x = x.not()
-
-
-
-
-
+    data.['avg'] = (sum.flt() / data.nums.len().flt()).round()

@@ -4,6 +4,12 @@ x = {'a' : 'aa'}
 y = x
 y.a = 'ab'
 
+# test that w is getting a reference to z
+# (inserting a new field into w should insert the same field into z)
+z = {}
+w = z
+w.['a'] = 'aa'
+
 # we expect a and c to have {'num': 100} but not b
 a = [{'num' : 5}, {'num' : 10}]
 b = [{'num' : 3}, {'num' : 22}]
@@ -16,3 +22,4 @@ d = [1, 2, 3]
 e = [4, 5, 6]
 f = d + e
 f.[0] = 0
+

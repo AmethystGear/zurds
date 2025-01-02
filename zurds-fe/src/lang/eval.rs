@@ -5,12 +5,14 @@ use std::{
     rc::Rc,
 };
 
+use serde_json::json;
+
 use super::{
     lexer::{self, AssignOp, Literal},
     parser::{BinOp, Expr, Statement},
 };
 
-fn eval_expr<'a>(
+pub fn eval_expr<'a>(
     expr: &Expr,
     ctx: &'a mut HashMap<String, Rc<RefCell<Val>>>,
 ) -> Result<Rc<RefCell<Val>>, ControlFlow> {
@@ -33,8 +35,9 @@ fn eval_expr<'a>(
                 ("err", [Val::String(s)]) => {
                     Err(ControlFlow::Error(EvalError::Custom(s.to_string())))
                 }
+                ("not", [Val::Bool(b)]) => Ok(Val::Bool(!b)),
                 (fn_name, args) => Err(ControlFlow::Error(EvalError::Program(format!(
-                    "cannot invoke '{}' with arguments {:?}",
+                    "cannot invoke function '{}' with arguments {:?}",
                     fn_name, args
                 )))),
             }?)))
@@ -89,10 +92,52 @@ fn eval_expr<'a>(
                                     .map(|x| Rc::new(RefCell::new(x)))
                                     .collect(),
                             ),
+                            (Val::Dict(dict), "get", [Val::String(s)]) => {
+                                Val::Opt(dict.get(s).cloned())
+                            }
+                            (Val::Opt(opt), "is_some", []) => Val::Bool(opt.is_some()),
+                            (Val::Opt(opt), "is_none", []) => Val::Bool(opt.is_none()),
+                            (Val::Opt(opt), "unwrap", []) => {
+                                if let Some(opt) = opt {
+                                    return Ok(opt.clone());
+                                } else {
+                                    return Err(ControlFlow::Error(EvalError::Program(
+                                        "tried to unwrap a maybe value, found nothing".into(),
+                                    )));
+                                }
+                            }
+                            (Val::Opt(opt), "unwrap", [Val::String(s)]) => {
+                                if let Some(opt) = opt {
+                                    return Ok(opt.clone());
+                                } else {
+                                    return Err(ControlFlow::Error(EvalError::Program(s.into())));
+                                }
+                            }
+                            (Val::Res(res), "is_ok", []) => Val::Bool(res.is_ok()),
+                            (Val::Res(res), "is_err", []) => Val::Bool(res.is_err()),
+                            (Val::Res(res), "unwrap", []) => match res {
+                                Ok(ok) => return Ok(ok.clone()),
+                                Err(e) => {
+                                    return Err(ControlFlow::Error(EvalError::Program(format!(
+                                        "error: {:?}",
+                                        e
+                                    ))))
+                                }
+                            },
+                            (Val::Res(res), "unwrap_err", []) => match res {
+                                Ok(ok) => {
+                                    return Err(ControlFlow::Error(EvalError::Program(format!(
+                                        "expected error value, but was ok: {:?}",
+                                        ok
+                                    ))))
+                                }
+                                Err(e) => return Ok(e.clone()),
+                            },
                             (Val::List(list), "add", [val]) => {
                                 list.push(Rc::new(RefCell::new((*val).clone())));
                                 Val::Unit
                             }
+                            (Val::List(list), "len", []) => Val::Int(list.len() as i64),
                             (Val::List(list), "remove", [Val::Int(i)]) => {
                                 let out_of_bounds = || {
                                     ControlFlow::Error(EvalError::Program(
@@ -111,21 +156,26 @@ fn eval_expr<'a>(
                                 Val::Bool(s.contains(sub))
                             }
                             (val, "str", []) => Val::String(format!("{}", val)),
-                            (Val::String(s), "int", []) => Val::Int(s.parse().map_err(|e| {
-                                ControlFlow::Error(EvalError::Program(format!("{}", e)))
-                            })?),
-                            (Val::String(s), "int?", []) => Val::Bool(s.parse::<i64>().is_ok()),
-                            (Val::String(s), "flt", []) => Val::Float(s.parse().map_err(|e| {
-                                ControlFlow::Error(EvalError::Program(format!("{}", e)))
-                            })?),
-                            (Val::String(s), "flt?", []) => Val::Bool(s.parse::<f64>().is_ok()),
+                            (Val::String(s), "int", []) => Val::Res(
+                                s.parse()
+                                    .map(|x| Rc::new(RefCell::new(Val::Int(x))))
+                                    .map_err(|x| {
+                                        Rc::new(RefCell::new(Val::String(format!("{}", x))))
+                                    }),
+                            ),
+                            (Val::String(s), "flt", []) => Val::Res(
+                                s.parse()
+                                    .map(|x| Rc::new(RefCell::new(Val::Float(x))))
+                                    .map_err(|x| {
+                                        Rc::new(RefCell::new(Val::String(format!("{}", x))))
+                                    }),
+                            ),
                             (Val::Int(i), "flt", []) => Val::Float(*i as f64),
                             (Val::Float(f), "round", []) => Val::Int(f.round() as i64),
                             (Val::Float(f), "ciel", []) => Val::Int(f.ceil() as i64),
                             (Val::Float(f), "floor", []) => Val::Int(f.floor() as i64),
-                            (Val::Bool(b), "not", []) => Val::Bool(!*b),
                             (_, fn_name, args) => Err(EvalError::Program(format!(
-                                "cannot invoke '{}' with args {:?}",
+                                "cannot invoke method '{}' with args {:?}",
                                 fn_name, args
                             )))
                             .map_err(|e| ControlFlow::Error(e))?,
@@ -155,12 +205,13 @@ fn eval_expr<'a>(
                         }
                         (Val::Dict(dict), Val::String(s)) => dict.get(&s).map(|x| x.clone()).ok_or(
                             ControlFlow::Error(EvalError::Program(format!(
-                                "key {} does not exist in dict {:?}",
-                                s, dict
+                                "key {} does not exist in dict {}",
+                                s,
+                                Val::Dict(dict.clone())
                             ))),
                         ),
                         (into, index) => Err(ControlFlow::Error(EvalError::Program(format!(
-                            "can't index with {:?} into {:?}",
+                            "can't index with {} into {}",
                             index, into
                         )))),
                     }
@@ -174,12 +225,13 @@ fn eval_expr<'a>(
                             dict.get(ident)
                                 .map(|x| x.clone())
                                 .ok_or(EvalError::Program(format!(
-                                    "key {} does not exist in dict {:?}",
-                                    ident, dict
+                                    "key {} does not exist in dict {}",
+                                    ident,
+                                    Val::Dict(dict.clone())
                                 )))
                         }
                         x => Err(EvalError::Program(format!(
-                            "can't access field {} of {:?}",
+                            "can't access field {} of {}",
                             ident, x
                         ))),
                     }
@@ -315,7 +367,9 @@ pub fn eval(
                 let op = op.as_ref();
                 let new = eval_expr(expr, ctx)?;
                 match assign {
-                    super::parser::Assign::Var(ident) => handle_assignment(new, Path::Str(ident.clone(), ctx), op)?,
+                    super::parser::Assign::Var(ident) => {
+                        handle_assignment(new, Path::Str(ident.clone(), ctx), op)?
+                    }
                     super::parser::Assign::Field(left, field) => {
                         let mut ctx_copy = ctx.clone();
                         let left = eval_expr(left, ctx)?;
@@ -377,16 +431,26 @@ pub fn eval(
     Ok(())
 }
 
-fn handle_assignment(new: Rc<RefCell<Val>>, current: Path<'_>, op: Option<&AssignOp>) -> Result<(), ControlFlow> {
+fn handle_assignment(
+    new: Rc<RefCell<Val>>,
+    current: Path<'_>,
+    op: Option<&AssignOp>,
+) -> Result<(), ControlFlow> {
     let new = match (current.resolve(), op) {
         (Some(current), Some(x)) => match x {
             lexer::AssignOp::Add => handle_operator_rc(current, &BinOp::Op(lexer::Op::Add), &new),
             lexer::AssignOp::Sub => handle_operator_rc(current, &BinOp::Op(lexer::Op::Sub), &new),
             lexer::AssignOp::Mul => handle_operator_rc(current, &BinOp::Op(lexer::Op::Mul), &new),
             lexer::AssignOp::Div => handle_operator_rc(current, &BinOp::Op(lexer::Op::Div), &new),
-        }.map_err(|e| ControlFlow::Error(e))?,
+        }
+        .map_err(|e| ControlFlow::Error(e))?,
         (_, None) => new,
-        (None, Some(_)) => return Err(ControlFlow::Error(EvalError::Program("can't do +=,-=,*=,/= because the variable or field wasn't previously defined".to_string()))),
+        (None, Some(_)) => {
+            return Err(ControlFlow::Error(EvalError::Program(
+                "can't do +=,-=,*=,/= because the variable or field wasn't previously defined"
+                    .to_string(),
+            )))
+        }
     };
     match current {
         Path::Str(key, map) => {
@@ -417,7 +481,90 @@ pub enum Val {
     // containers
     List(Vec<Rc<RefCell<Val>>>),
     Dict(HashMap<String, Rc<RefCell<Val>>>),
-    Maybe(Option<Rc<RefCell<Val>>>),
+    Opt(Option<Rc<RefCell<Val>>>),
+    Res(Result<Rc<RefCell<Val>>, Rc<RefCell<Val>>>),
+}
+
+pub fn to_json(x: &Rc<RefCell<Val>>) -> Result<serde_json::Value, String> {
+    let x = x.borrow();
+    x.deref().to_json()
+}
+
+pub fn from_json(val: serde_json::Value) -> Result<Val, String> {
+    Ok(match val {
+        serde_json::Value::Null => Val::Opt(None),
+        serde_json::Value::Bool(b) => Val::Bool(b),
+        serde_json::Value::Number(number) => {
+            if number.is_i64() {
+                Val::Int(number.as_i64().unwrap())
+            } else if number.is_f64() {
+                Val::Float(number.as_f64().unwrap())
+            } else {
+                return Err("number cannot be converted to i64 or f64".into());
+            }
+        }
+        serde_json::Value::String(s) => Val::String(s),
+        serde_json::Value::Array(vec) => {
+            let vec: Result<Vec<_>, _> = vec.into_iter().map(|x| from_json(x)).collect();
+            Val::List(vec?.into_iter().map(|x| Rc::new(RefCell::new(x))).collect())
+        }
+        serde_json::Value::Object(map) => {
+            let mut dict = HashMap::new();
+            for (k, v) in map {
+                let v = from_json(v)?;
+                let v = if k.ends_with('?') {
+                    // wrap field in optional if it ends with a '?'
+                    match v {
+                        Val::Opt(None) => Val::Opt(None),
+                        x => Val::Opt(Some(Rc::new(RefCell::new(x)))),
+                    }
+                } else {
+                    // otherwise, assume that the field should be present.
+                    match v {
+                        Val::Opt(None) => {
+                            return Err("field does not end with '?', but is null.".into())
+                        }
+                        x => x,
+                    }
+                };
+                dict.insert(k, Rc::new(RefCell::new(v)));
+            }
+            Val::Dict(dict)
+        }
+    })
+}
+
+impl Val {
+    pub fn to_json(&self) -> Result<serde_json::Value, String> {
+        match self {
+            Val::Unit => Err("cannot serialize unit '()' to json".into()),
+            Val::Int(i) => Ok(json!(i)),
+            Val::Bool(b) => Ok(json!(b)),
+            Val::Float(f) => Ok(json!(f)),
+            Val::String(s) => Ok(json!(s)),
+            Val::Range(x, y) => Err(format!("cannot serialize range '{}..{}' to json", x, y)),
+            Val::List(vec) => {
+                let array: Result<Vec<_>, _> = vec.iter().map(|x| to_json(x)).collect();
+                Ok(serde_json::Value::Array(array?))
+            }
+            Val::Dict(hash_map) => {
+                let mut map = serde_json::Map::new();
+                for (k, v) in hash_map {
+                    let v = to_json(v)?;
+                    if !k.ends_with('?') && v == serde_json::Value::Null {
+                        return Err(format!("non-nullable field '{}' was null.", k));
+                    }
+                    map.insert(k.clone(), v);
+                }
+                Ok(serde_json::Value::Object(map))
+            }
+            Val::Opt(ref_cell) => match ref_cell {
+                Some(json) => to_json(json),
+                None => Ok(serde_json::Value::Null),
+            },
+            Val::Res(res) => Err(format!("cannot serialize result '{:?}' to json", res)),
+        }
+    }
 }
 
 impl std::fmt::Display for Val {
@@ -427,7 +574,7 @@ impl std::fmt::Display for Val {
             Val::Int(value) => write!(f, "{}", value),
             Val::Bool(value) => write!(f, "{}", value),
             Val::Float(value) => write!(f, "{}", value),
-            Val::String(value) => write!(f, "\"{}\"", value),
+            Val::String(value) => write!(f, "'{}'", value),
             Val::List(values) => {
                 let formatted_values: Vec<String> =
                     values.iter().map(|v| format!("{}", v.borrow())).collect();
@@ -437,17 +584,21 @@ impl std::fmt::Display for Val {
             Val::Dict(map) => {
                 let formatted_entries: Vec<String> = map
                     .iter()
-                    .map(|(k, v)| format!("\"{}\": {}", k, v.borrow()))
+                    .map(|(k, v)| format!("'{}': {}", k, v.borrow()))
                     .collect();
                 write!(f, "{{{}}}", formatted_entries.join(", "))
             }
-            Val::Maybe(v) => {
+            Val::Opt(v) => {
                 if let Some(v) = v {
                     write!(f, "Some({})", v.borrow())
                 } else {
                     write!(f, "None")
                 }
             }
+            Val::Res(v) => match v {
+                Ok(ok) => write!(f, "Ok({})", ok.borrow()),
+                Err(err) => write!(f, "Err({})", err.borrow()),
+            },
         }
     }
 }
@@ -472,17 +623,29 @@ fn handle_operator(a: &Val, op: &super::parser::BinOp, b: &Val) -> Result<Val, E
         (Val::Int(a), Op(Sub), Val::Int(b)) => Val::Int(a - b),
         (Val::Int(a), Op(Mul), Val::Int(b)) => Val::Int(a * b),
         (Val::Int(a), Op(Div), Val::Int(b)) => Val::Int(a / b),
+        (Val::Int(a), Op(LThan), Val::Int(b)) => Val::Bool(a < b),
+        (Val::Int(a), Op(GThan), Val::Int(b)) => Val::Bool(a > b),
+        (Val::Int(a), Op(LThanEq), Val::Int(b)) => Val::Bool(a <= b),
+        (Val::Int(a), Op(GThanEq), Val::Int(b)) => Val::Bool(a >= b),
         (Val::Float(a), Op(Add), Val::Float(b)) => Val::Float(a + b),
         (Val::Float(a), Op(Sub), Val::Float(b)) => Val::Float(a - b),
         (Val::Float(a), Op(Mul), Val::Float(b)) => Val::Float(a * b),
         (Val::Float(a), Op(Div), Val::Float(b)) => Val::Float(a / b),
+        (Val::Float(a), Op(LThan), Val::Float(b)) => Val::Bool(a < b),
+        (Val::Float(a), Op(GThan), Val::Float(b)) => Val::Bool(a > b),
+        (Val::Float(a), Op(LThanEq), Val::Float(b)) => Val::Bool(a <= b),
+        (Val::Float(a), Op(GThanEq), Val::Float(b)) => Val::Bool(a >= b),
         (Val::String(a), Op(Add), Val::String(b)) => Val::String(a.to_owned() + b),
         (Val::Bool(a), And, Val::Bool(b)) => Val::Bool(*a && *b),
         (Val::Bool(a), Or, Val::Bool(b)) => Val::Bool(*a || *b),
         (Val::Int(a), Op(Range), Val::Int(b)) => Val::Range(*a, *b),
         (left, Op(Eq), right) => Val::Bool(left == right),
+        (left, Op(Neq), right) => Val::Bool(left != right),
         (Val::List(a), Op(Add), Val::List(b)) => {
             Val::List(a.clone().into_iter().chain(b.clone().into_iter()).collect())
+        }
+        (Val::Dict(a), Op(Add), Val::Dict(b)) => {
+            Val::Dict(a.clone().into_iter().chain(b.clone().into_iter()).collect())
         }
         (a, op, b) => Err(EvalError::Program(format!(
             "can't do operation {:?} between {:?} and {:?}",
@@ -505,12 +668,10 @@ mod tests {
 
     use super::*;
 
-
-
     #[test]
     fn test_is_int() {
         let mut empty_ctx = HashMap::new();
-        let tokens = lexer::tokenize("'1'.int?().not()").unwrap();
+        let tokens = lexer::tokenize("not('1'.int?())").unwrap();
         let statements = parse(&mut tokens.iter()).unwrap();
         match &statements[..] {
             [Statement::Expr(expr)] => {
@@ -519,11 +680,11 @@ mod tests {
                 let res = res.borrow();
                 let res = res.deref();
                 match res {
-                    Val::Bool(false) => {},
-                    _ => panic!("expected `false`, found {}", res)
+                    Val::Bool(false) => {}
+                    _ => panic!("expected `false`, found {}", res),
                 }
             }
-            _ => panic!("expected single expression")
+            _ => panic!("expected single expression"),
         }
     }
 
@@ -534,20 +695,87 @@ mod tests {
         let tokens = lexer::tokenize(program).unwrap();
         let statements = parse(&mut tokens.iter()).unwrap();
         eval(&statements, &mut ctx).unwrap();
-        let x = ctx.get("x").unwrap();
-        let x = x.borrow();
-        let x = x.deref();
-        match x {
-            Val::Dict(x) => {
-                let a = x.get("a").unwrap();
-                let a = a.borrow();
-                let a = a.deref();
-                match a {
-                    Val::String(s) if s == "ab" => {},
-                    _ => panic!("expected x.a == 'ab'")
+        let x = ctx.get("x").unwrap().borrow();
+        match x.deref() {
+            Val::Dict(x) => match x.get("a").unwrap().borrow().deref() {
+                Val::String(s) if s == "ab" => {}
+                _ => panic!("expected x.a == 'ab'"),
+            },
+            _ => panic!("expected 'x' to be a dict"),
+        }
+        let z = ctx.get("z").unwrap().borrow();
+        match z.deref() {
+            Val::Dict(z) => match z.get("a").unwrap().borrow().deref() {
+                Val::String(s) if s == "aa" => {}
+                _ => panic!("expected z.a == 'aa'"),
+            },
+            _ => panic!("expected 'z' to be a dict"),
+        }
+    }
+
+    #[test]
+    fn test_avg() {
+        let mut ctx = HashMap::new();
+        let program = include_str!("../../test-spells/avg.spell");
+        let tokens = lexer::tokenize(program).unwrap();
+        let statements = parse(&mut tokens.iter()).unwrap();
+        eval(&statements, &mut ctx).unwrap();
+        let dataset = to_json(ctx.get("dataset").unwrap()).unwrap();
+        let expected_json = json!([
+            {"avg":2, "nums":[1,2,3]},
+            {"avg":5, "nums":[4,5,6]},
+            {"avg":8, "nums":[7,8,9]},
+        ]);
+        assert_eq!(dataset, expected_json);
+    }
+
+    #[test]
+    fn test_damage_to_target() {
+        for target in ["p0", "p1", "creature0", "bad-id"] {
+            let mut ctx = HashMap::new();
+            let board = json!({
+                "players" : {
+                    "p0" : { "health" : 3, "targets" : [target], "mana" : 10},
+                    "p1" : { "health" : 3, "targets" : [] }
+                },
+                "creatures" : {
+                    "creature0" : { "health" : 3 }
                 }
-            }   
-            _ => panic!("expected 'x' and 'y' to be dictionaries")
+            });
+            ctx.insert(
+                "@board".into(),
+                Rc::new(RefCell::new(from_json(board).unwrap())),
+            );
+            ctx.insert(
+                "@owner".into(),
+                Rc::new(RefCell::new(Val::String("p0".into()))),
+            );
+            let program = include_str!("../../test-spells/damage-to-target.spell");
+            let tokens = lexer::tokenize(program).unwrap();
+            let statements = parse(&mut tokens.iter()).unwrap();
+            match (target, eval(&statements, &mut ctx)) {
+                ("bad-id", Err(ControlFlow::Error(EvalError::Program(x)))) => {
+                    assert_eq!(x, "target is not a player or creature");
+                }
+                (_, x) => {
+                    x.unwrap();
+                }
+            };
+            let board = to_json(&ctx["@board"]).unwrap();
+            let expected_json = json!({
+                "players" : {
+                    "p0" : { 
+                        "health" : if target == "p0" { 0 } else { 3 }, 
+                        "mana" : if target == "bad-id" { 10 } else { 7 },
+                        "targets" : [target], 
+                    },
+                    "p1" : { "health" : if target == "p1" { 0 } else { 3 }, "targets" : [] }
+                },
+                "creatures" : {
+                    "creature0" : { "health" : if target == "creature0" { 0 } else { 3 } }
+                }
+            });
+            assert_eq!(board, expected_json);
         }
     }
 }
