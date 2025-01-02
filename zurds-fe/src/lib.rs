@@ -13,8 +13,3 @@ fn main() -> Result<(), JsValue> {
     lang::eval::eval(&program, &mut ctx).unwrap();
     Ok(())
 }
-
-#[wasm_bindgen]
-pub fn set_datastream(a: u32, b: u32) -> u32 {
-    a + b
-}

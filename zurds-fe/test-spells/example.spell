@@ -15,5 +15,4 @@ for key, value in dict:
         print("removing " + key)
 
 
-
 print(dict.str())

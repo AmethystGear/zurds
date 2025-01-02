@@ -127,8 +127,8 @@ pub fn eval_expr<'a>(
                             (Val::Res(res), "unwrap_err", []) => match res {
                                 Ok(ok) => {
                                     return Err(ControlFlow::Error(EvalError::Program(format!(
-                                        "expected error value, but was ok: {:?}",
-                                        ok
+                                        "expected error value, but was Ok({})",
+                                        ok.borrow()
                                     ))))
                                 }
                                 Err(e) => return Ok(e.clone()),
@@ -662,8 +662,6 @@ pub enum EvalError {
 
 #[cfg(test)]
 mod tests {
-    use std::task::Context;
-
     use crate::lang::parser::parse;
 
     use super::*;
