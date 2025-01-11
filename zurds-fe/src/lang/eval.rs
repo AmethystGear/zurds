@@ -1,11 +1,13 @@
 use std::{
-    cell::{Ref, RefCell},
+    cell::RefCell,
     collections::HashMap,
     ops::{Deref, DerefMut},
     rc::Rc,
 };
 
+use gloo_utils::format::JsValueSerdeExt;
 use serde_json::json;
+use wasm_bindgen::JsValue;
 
 use super::{
     lexer::{self, AssignOp, Literal},
@@ -28,7 +30,29 @@ pub fn eval_expr<'a>(
             let args: Vec<_> = args?.into_iter().map(|x| x.borrow().clone()).collect();
             Ok(Rc::new(RefCell::new(match (&ident[..], &args[..]) {
                 ("print", [Val::String(s)]) => {
-                    web_sys::console::log_1(&s.into());
+                    // this if check exists so that we can locally run test code that prints to console.
+                    if cfg!(any(target_family = "wasm")) {
+                        web_sys::console::log_1(&s.into());
+                    } else {
+                        println!("{}", s);
+                    }
+                    Ok(Val::Unit)
+                }
+                ("print", [v]) => {
+                    // this if check exists so that we can locally run test code that prints to console.
+                    if cfg!(any(target_family = "wasm")) {
+                        match v.to_json() {
+                            Ok(json) => {
+                                web_sys::console::log_1(&JsValue::from_serde(&json).unwrap());
+                            },
+                            Err(_) => {
+                                let s = format!("{}", v);
+                                web_sys::console::log_1(&s.into());
+                            }
+                        }
+                    } else {
+                        println!("{}", v);
+                    }
                     Ok(Val::Unit)
                 }
                 ("exit", []) => Err(ControlFlow::Exit),
@@ -37,8 +61,9 @@ pub fn eval_expr<'a>(
                 }
                 ("not", [Val::Bool(b)]) => Ok(Val::Bool(!b)),
                 (fn_name, args) => Err(ControlFlow::Error(EvalError::Program(format!(
-                    "cannot invoke function '{}' with arguments {:?}",
-                    fn_name, args
+                    "cannot invoke function '{}' with arguments {}",
+                    fn_name,
+                    args.iter().map(|x| format!("{},", x)).collect::<String>()
                 )))),
             }?)))
         }
@@ -69,21 +94,67 @@ pub fn eval_expr<'a>(
                 Expr::Call(ident, vec) => {
                     let args: Result<Vec<_>, _> =
                         vec.iter().map(|expr| eval_expr(expr, ctx)).collect();
-                    let args = args?;
-                    let args: Vec<Ref<'_, Val>> = args.iter().map(|x| x.borrow()).collect();
-                    let args: Vec<&Val> = args.iter().map(|x| x.deref()).collect();
-
+                    let mut args = args?;
                     let left = eval_expr(left, ctx)?;
-                    let mut left = left.borrow_mut();
-                    let left_val = left.deref_mut();
+                    let ret = {
+                        let mut left = left.borrow_mut();
+                        let left_val = left.deref_mut();
+                        match (left_val, &ident[..]) {
+                            (Val::List(list), "add") => {
+                                if let (Some(argument), None) = (args.pop(), args.pop()) {
+                                    list.push(argument);
+                                    Some(Val::Unit)
+                                } else {
+                                    None
+                                }
+                            }
+                            (Val::Dict(dict), "remove") => {
+                                let args: Vec<_> = args.iter().map(|x| x.borrow()).collect();
+                                let args: Vec<_> = args.iter().map(|x| x.deref()).collect();
+                                match &args[..] {
+                                    [Val::String(s)] => {
+                                        dict.remove(s);
+                                        Some(Val::Unit)
+                                    }
+                                    _ => None,
+                                }
+                            }
+                            (Val::List(list), "remove") => {
+                                let args: Vec<_> = args.iter().map(|x| x.borrow()).collect();
+                                let args: Vec<_> = args.iter().map(|x| x.deref()).collect();
+                                match &args[..] {
+                                    [Val::Int(i)] => {
+                                        let out_of_bounds = || {
+                                            ControlFlow::Error(EvalError::Program(
+                                                "index out of bounds".to_string(),
+                                            ))
+                                        };
+                                        let i = usize::try_from(*i).map_err(|_| out_of_bounds())?;
+                                        if i < list.len() {
+                                            list.remove(i);
+                                        } else {
+                                            return Err(out_of_bounds());
+                                        }
+                                        Some(Val::Unit)
+                                    }
+                                    _ => None,
+                                }
+                            }
+                            _ => None,
+                        }
+                    };
+
+                    if let Some(ret) = ret {
+                        return Ok(Rc::new(RefCell::new(ret)));
+                    }
+                    let left = left.borrow();
+                    let left_val = left.deref();
+                    let args: Vec<_> = args.iter().map(|x| x.borrow()).collect();
+                    let args: Vec<_> = args.iter().map(|x| x.deref()).collect();
                     Ok(Rc::new(RefCell::new(
                         match (left_val, &ident[..], &args[..]) {
                             (Val::Dict(dict), "contains_key", [Val::String(s)]) => {
                                 Val::Bool(dict.contains_key(s))
-                            }
-                            (Val::Dict(dict), "remove", [Val::String(s)]) => {
-                                dict.remove(s);
-                                Val::Unit
                             }
                             (Val::Dict(dict), "keys", []) => Val::List(
                                 dict.keys()
@@ -119,8 +190,8 @@ pub fn eval_expr<'a>(
                                 Ok(ok) => return Ok(ok.clone()),
                                 Err(e) => {
                                     return Err(ControlFlow::Error(EvalError::Program(format!(
-                                        "error: {:?}",
-                                        e
+                                        "error: {}",
+                                        e.borrow()
                                     ))))
                                 }
                             },
@@ -133,25 +204,7 @@ pub fn eval_expr<'a>(
                                 }
                                 Err(e) => return Ok(e.clone()),
                             },
-                            (Val::List(list), "add", [val]) => {
-                                list.push(Rc::new(RefCell::new((*val).clone())));
-                                Val::Unit
-                            }
                             (Val::List(list), "len", []) => Val::Int(list.len() as i64),
-                            (Val::List(list), "remove", [Val::Int(i)]) => {
-                                let out_of_bounds = || {
-                                    ControlFlow::Error(EvalError::Program(
-                                        "index out of bounds".to_string(),
-                                    ))
-                                };
-                                let i = usize::try_from(*i).map_err(|_| out_of_bounds())?;
-                                if i < list.len() {
-                                    list.remove(i);
-                                } else {
-                                    return Err(out_of_bounds());
-                                }
-                                Val::Unit
-                            }
                             (Val::String(s), "contains", [Val::String(sub)]) => {
                                 Val::Bool(s.contains(sub))
                             }
@@ -175,8 +228,9 @@ pub fn eval_expr<'a>(
                             (Val::Float(f), "ciel", []) => Val::Int(f.ceil() as i64),
                             (Val::Float(f), "floor", []) => Val::Int(f.floor() as i64),
                             (_, fn_name, args) => Err(EvalError::Program(format!(
-                                "cannot invoke method '{}' with args {:?}",
-                                fn_name, args
+                                "cannot invoke method '{}' with args {}",
+                                fn_name,
+                                args.iter().map(|x| format!("{},", x)).collect::<String>()
                             )))
                             .map_err(|e| ControlFlow::Error(e))?,
                         },
@@ -217,19 +271,19 @@ pub fn eval_expr<'a>(
                     }
                 }
                 Expr::Var(ident) => {
-                    let left_val = eval_expr(left, ctx)?;
-                    let mut left_val = left_val.borrow_mut();
-                    let left_val = left_val.deref_mut();
-                    match left_val {
-                        Val::Dict(dict) => {
-                            dict.get(ident)
-                                .map(|x| x.clone())
-                                .ok_or(EvalError::Program(format!(
-                                    "key {} does not exist in dict {}",
-                                    ident,
-                                    Val::Dict(dict.clone())
-                                )))
-                        }
+                    let left_val = {
+                        let left_val = eval_expr(left, ctx)?;
+                        let left_val = left_val.borrow();
+                        left_val.deref().clone()
+                    };
+                    match &left_val {
+                        Val::Dict(dict) => dict.get(ident).map(|x| x.clone()).ok_or_else(|| {
+                            EvalError::Program(format!(
+                                "key {} does not exist in dict {}",
+                                ident,
+                                Val::Dict(dict.clone())
+                            ))
+                        }),
                         x => Err(EvalError::Program(format!(
                             "can't access field {} of {}",
                             ident, x
@@ -240,8 +294,9 @@ pub fn eval_expr<'a>(
                 _ => {
                     let left_val = eval_expr(left, ctx)?;
                     Err(ControlFlow::Error(EvalError::Program(format!(
-                        "can't access property {:?} of {:?}",
-                        right, left_val
+                        "can't access property {:?} of {}",
+                        right,
+                        left_val.borrow()
                     ))))
                 }
             },
@@ -297,9 +352,12 @@ pub fn eval(
     for statement in program {
         match statement {
             Statement::If(expr, true_case, false_case) => {
-                let condition = eval_expr(expr, ctx)?;
-                let condition = condition.borrow();
-                if let Val::Bool(condition) = *condition {
+                let condition = {
+                    let condition = eval_expr(expr, ctx)?;
+                    let condition = condition.borrow();
+                    condition.clone()
+                };
+                if let Val::Bool(condition) = condition {
                     if condition {
                         eval(true_case, ctx)?;
                     } else {
@@ -307,15 +365,17 @@ pub fn eval(
                     }
                 } else {
                     Err(ControlFlow::Error(EvalError::Program(format!(
-                        "expected true/false, found {:?}",
+                        "expected true/false, found {}",
                         condition
                     ))))?;
                 }
             }
             Statement::For(var, second_var, expr, body) => {
-                let iterable = eval_expr(expr, ctx)?;
-                let iterable = iterable.borrow();
-                let iterable = iterable.deref().clone();
+                let iterable = {
+                    let iterable = eval_expr(expr, ctx)?;
+                    let iterable = iterable.borrow();
+                    iterable.deref().clone()
+                };
                 if let Some(second_var) = second_var {
                     match iterable {
                         Val::Dict(elems) => {
@@ -335,7 +395,7 @@ pub fn eval(
                             }
                         }
                         _ => Err(ControlFlow::Error(EvalError::Program(format!(
-                            "can't iterate over {:?}",
+                            "can't iterate over {}",
                             iterable
                         ))))?,
                     };
@@ -348,7 +408,7 @@ pub fn eval(
                                 .map(|i| Rc::new(RefCell::new(Val::Int(i)))),
                         ),
                         _ => Err(ControlFlow::Error(EvalError::Program(format!(
-                            "can't iterate over {:?}",
+                            "can't iterate over {}",
                             iterable
                         ))))?,
                     };
@@ -469,7 +529,7 @@ fn handle_assignment(
     Ok(())
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum Val {
     // primitives
     Unit,
@@ -536,6 +596,23 @@ pub fn from_json(val: serde_json::Value) -> Result<Val, String> {
 
 impl Val {
     pub fn to_json(&self) -> Result<serde_json::Value, String> {
+        let is_looping = match &self {
+            Val::List(vec) => vec.iter().any(|x| is_looping(x.clone())),
+            Val::Dict(map) => map.iter().any(|(_, x)| is_looping(x.clone())),
+            Val::Opt(opt) => opt.as_ref().map(|x| is_looping(x.clone())).unwrap_or(false),
+            Val::Res(res) => is_looping(
+                match res {
+                    Ok(x) => x,
+                    Err(x) => x,
+                }
+                .clone(),
+            ),
+            _ => false,
+        };
+        if is_looping {
+            return Err("structure contains looping references, cannot serialize to json.".into());
+        }
+
         match self {
             Val::Unit => Err("cannot serialize unit '()' to json".into()),
             Val::Int(i) => Ok(json!(i)),
@@ -562,44 +639,115 @@ impl Val {
                 Some(json) => to_json(json),
                 None => Ok(serde_json::Value::Null),
             },
-            Val::Res(res) => Err(format!("cannot serialize result '{:?}' to json", res)),
+            Val::Res(res) => Err(format!("cannot serialize result to json")),
+        }
+    }
+
+    fn str(&self) -> String {
+        match &self {
+            Val::Unit => "()".into(),
+            Val::Int(value) => format!("{}", value),
+            Val::Bool(value) => format!("{}", value),
+            Val::Float(value) => format!("{}", value),
+            Val::String(value) => format!("'{}'", value),
+            Val::Range(start, end) => format!("({}..{})", start, end),
+            Val::List(values) => {
+                let formatted_values: Vec<String> = values
+                    .iter()
+                    .map(|v| {
+                        if is_looping(v.clone()) {
+                            "...".into()
+                        } else {
+                            v.borrow().str()
+                        }
+                    })
+                    .collect();
+                format!("[{}]", formatted_values.join(", "))
+            }
+            Val::Dict(map) => {
+                let formatted_entries: Vec<String> = map
+                    .iter()
+                    .map(|(k, v)| {
+                        let v = if is_looping(v.clone()) {
+                            "...".into()
+                        } else {
+                            v.borrow().str()
+                        };
+                        format!("'{}': {}", k, v)
+                    })
+                    .collect();
+                format!("{{{}}}", formatted_entries.join(", "))
+            }
+            Val::Opt(v) => {
+                if let Some(v) = v {
+                    let v = if is_looping(v.clone()) {
+                        "...".into()
+                    } else {
+                        v.borrow().str()
+                    };
+                    format!("Some({})", v)
+                } else {
+                    "None".into()
+                }
+            }
+            Val::Res(v) => {
+                let either = match &v {
+                    Ok(x) => x,
+                    Err(x) => x,
+                };
+                let s = if is_looping(either.clone()) {
+                    "...".into()
+                } else {
+                    either.borrow().str()
+                };
+                match &v {
+                    Ok(_) => format!("Ok({})", s),
+                    Err(_) => format!("Err({})", s),
+                }
+            }
         }
     }
 }
 
+fn is_looping(start: Rc<RefCell<Val>>) -> bool {
+    fn is_looping(start: Rc<RefCell<Val>>, find: Option<Rc<RefCell<Val>>>) -> bool {
+        let find = if let Some(find) = find {
+            if Rc::ptr_eq(&start, &find) {
+                return true;
+            }
+            find
+        } else {
+            start.clone()
+        };
+        let start = start.borrow();
+        let start = start.deref();
+        match start {
+            Val::List(vec) => vec
+                .iter()
+                .any(|x| is_looping(x.clone(), Some(find.clone()))),
+            Val::Dict(map) => map
+                .iter()
+                .any(|(_, x)| is_looping(x.clone(), Some(find.clone()))),
+            Val::Opt(x) => x
+                .as_ref()
+                .map(|x| is_looping(x.clone(), Some(find)))
+                .unwrap_or(false),
+            Val::Res(x) => {
+                let either = match x {
+                    Ok(x) => x,
+                    Err(x) => x,
+                };
+                is_looping(either.clone(), Some(find))
+            }
+            _ => false,
+        }
+    }
+    is_looping(start, None)
+}
+
 impl std::fmt::Display for Val {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Val::Unit => write!(f, "()"),
-            Val::Int(value) => write!(f, "{}", value),
-            Val::Bool(value) => write!(f, "{}", value),
-            Val::Float(value) => write!(f, "{}", value),
-            Val::String(value) => write!(f, "'{}'", value),
-            Val::List(values) => {
-                let formatted_values: Vec<String> =
-                    values.iter().map(|v| format!("{}", v.borrow())).collect();
-                write!(f, "[{}]", formatted_values.join(", "))
-            }
-            Val::Range(start, end) => write!(f, "({}..{})", start, end),
-            Val::Dict(map) => {
-                let formatted_entries: Vec<String> = map
-                    .iter()
-                    .map(|(k, v)| format!("'{}': {}", k, v.borrow()))
-                    .collect();
-                write!(f, "{{{}}}", formatted_entries.join(", "))
-            }
-            Val::Opt(v) => {
-                if let Some(v) = v {
-                    write!(f, "Some({})", v.borrow())
-                } else {
-                    write!(f, "None")
-                }
-            }
-            Val::Res(v) => match v {
-                Ok(ok) => write!(f, "Ok({})", ok.borrow()),
-                Err(err) => write!(f, "Err({})", err.borrow()),
-            },
-        }
+        write!(f, "{}", self.str())
     }
 }
 
@@ -648,7 +796,7 @@ fn handle_operator(a: &Val, op: &super::parser::BinOp, b: &Val) -> Result<Val, E
             Val::Dict(a.clone().into_iter().chain(b.clone().into_iter()).collect())
         }
         (a, op, b) => Err(EvalError::Program(format!(
-            "can't do operation {:?} between {:?} and {:?}",
+            "can't do operation {:?} between {} and {}",
             op, a, b
         )))?,
     })
@@ -665,6 +813,18 @@ mod tests {
     use crate::lang::parser::parse;
 
     use super::*;
+
+    fn expr_eval(
+        program: &str,
+        ctx: &mut HashMap<String, Rc<RefCell<Val>>>,
+    ) -> Result<Rc<RefCell<Val>>, ControlFlow> {
+        let tokens = lexer::tokenize(program).unwrap();
+        let statements = parse(&mut tokens.iter()).unwrap();
+        match &statements[..] {
+            [Statement::Expr(expr)] => eval_expr(expr, ctx),
+            _ => panic!("expected single expression"),
+        }
+    }
 
     #[test]
     fn test_is_int() {
@@ -709,6 +869,42 @@ mod tests {
             },
             _ => panic!("expected 'z' to be a dict"),
         }
+    }
+
+    #[test]
+    fn test_example() {
+        let mut ctx = HashMap::new();
+        let program = include_str!("../../test-spells/example.spell");
+        let tokens = lexer::tokenize(program).unwrap();
+        let statements = parse(&mut tokens.iter()).unwrap();
+        eval(&statements, &mut ctx).unwrap();
+    }
+
+    #[test]
+    fn test_looping_assignment() {
+        let mut ctx: HashMap<String, Rc<RefCell<Val>>> = HashMap::new();
+        let program = include_str!("../../test-spells/looping-assignment.spell");
+        let tokens = lexer::tokenize(program).unwrap();
+        let statements = parse(&mut tokens.iter()).unwrap();
+        eval(&statements, &mut ctx).unwrap();
+        assert_eq!(ctx["x"].borrow().str(), "{'y': ...}");
+        assert_eq!(ctx["y"].borrow().str(), "[...]");
+        assert_eq!(
+            "[...]",
+            expr_eval("x.y.[0].y.str()", &mut ctx)
+                .unwrap()
+                .borrow()
+                .to_json()
+                .unwrap()
+        );
+        assert_eq!(
+            "{'y': ...}",
+            expr_eval("x.y.[0].y.[0].str()", &mut ctx)
+                .unwrap()
+                .borrow()
+                .to_json()
+                .unwrap()
+        );
     }
 
     #[test]
@@ -762,10 +958,10 @@ mod tests {
             let board = to_json(&ctx["@board"]).unwrap();
             let expected_json = json!({
                 "players" : {
-                    "p0" : { 
-                        "health" : if target == "p0" { 0 } else { 3 }, 
+                    "p0" : {
+                        "health" : if target == "p0" { 0 } else { 3 },
                         "mana" : if target == "bad-id" { 10 } else { 7 },
-                        "targets" : [target], 
+                        "targets" : [target],
                     },
                     "p1" : { "health" : if target == "p1" { 0 } else { 3 }, "targets" : [] }
                 },

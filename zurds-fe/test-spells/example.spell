@@ -2,17 +2,17 @@ prev = 'placeholder'
 dict = {}
 for x in 0..10:
     for y in 0..10:
-        if x * y == 5 or x + y == 8:
+        if x * y == 6:
             v = x.str() + "," + y.str()
             dict.[v] = prev
             prev = v
 
-print(dict.str())
+print(dict)
 
-for key,value in dict:
-    if dict.[key].has('placeholder'):
+for key, value in dict:
+    if dict.[key].contains('placeholder'):
         dict.remove(key)
         print("removing " + key)
 
 
-print(dict.str())
+print(dict)
