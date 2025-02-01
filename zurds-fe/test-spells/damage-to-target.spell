@@ -8,5 +8,8 @@ if owner.mana < 3:
 
 target = owner.targets.[0]
 possible_targets = @board.players + @board.creatures
-possible_targets.get(target).unwrap('target is not a player or creature').health -= 3
+possible_targets.get(target).map(fn x: x - 3)
 owner.mana -= 3
+
+some_function = fn (x, y, z):
+    

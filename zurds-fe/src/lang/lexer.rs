@@ -86,6 +86,8 @@ pub enum Kw {
     And,
     Or,
     In,
+    Fn,
+    Return
 }
 
 const KW: Map<&str, Kw> = phf_map!(
@@ -99,9 +101,11 @@ const KW: Map<&str, Kw> = phf_map!(
     "and" => Kw::And,
     "or" => Kw::Or,
     "in" => Kw::In,
+    "fn" => Kw::Fn,
+    "return" => Kw::Return
 );
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     Int(i64),
     Float(f64),

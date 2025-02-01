@@ -1,0 +1,11 @@
+me = @board.cards.[@self].owner
+opponent = @board.players.keys().filter(fn player: player != me).[0]
+
+card = @board.players.[me].targets.get(0).unwrap('please choose a card')
+if card.location != 'field':
+    err('you must choose a card that is on the field')
+
+if card.owner != me:
+    err('you must choose a card that you control')
+
+card.owner = opponent

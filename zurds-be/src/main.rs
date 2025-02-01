@@ -121,6 +121,7 @@ async fn get(path: &[&str], stream: &mut TcpStream) -> Result<(), tokio::io::Err
                     "png" => Ok("image/png"),
                     "webp" => Ok("image/webp"),
                     "wasm" => Ok("application/wasm"),
+                    "ico" => Ok("image/x-icon"),
                     _ => Err(()),
                 },
                 _ => Err(()),

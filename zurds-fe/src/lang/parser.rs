@@ -4,14 +4,19 @@ use super::{
 };
 use std::slice::Iter;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum BinOp {
     Op(lexer::Op),
     And,
     Or,
 }
 
-#[derive(Debug)]
+pub enum Fn {
+    Lambda(Vec<lexer::Ident>, Expr),
+    Function(Vec<lexer::Ident>, Vec<Statement>)
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Literal(lexer::Literal),
     Call(lexer::Ident, Vec<Expr>),
@@ -19,21 +24,22 @@ pub enum Expr {
     Dict(Vec<(Expr, Expr)>),
     BinOp(Box<Expr>, BinOp, Box<Expr>),
     Var(lexer::Ident),
+    Lambda(Vec<lexer::Ident>, Box<Expr>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Field {
     Var(lexer::Ident),
     Index(Expr),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Assign {
     Var(lexer::Ident),
     Field(Expr, Field),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
     If(Expr, Vec<Statement>, Vec<Statement>),
     For(lexer::Ident, Option<lexer::Ident>, Expr, Vec<Statement>),
@@ -43,6 +49,8 @@ pub enum Statement {
     Continue,
     Break,
     Pass,
+    Return(Option<Expr>),
+    Function(lexer::Ident, Vec<lexer::Ident>, Vec<Statement>)
 }
 
 const PRECEDENCE: [BinOp; 15] = [
@@ -213,6 +221,28 @@ fn parse_primary(tokens: &mut Iter<'_, (lexer::Token, Loc)>) -> Result<Expr, Lan
                     }
                 }
                 Ok(Expr::Dict(args))
+            }
+            lexer::Token::Kw(lexer::Kw::Fn) => {
+                let mut args = vec![];
+                loop {
+                    match tokens.next().map(|(x, _)| x) {
+                        Some(lexer::Token::Punc(lexer::Punc::Colon)) => {
+                            break;
+                        }
+                        Some(lexer::Token::Ident(x)) => {
+                            args.push(x.clone());
+                        }
+                        None => Err(LangErr {
+                            loc: *loc,
+                            err: "expected ':' at the end of function argument list".into(),
+                        })?,
+                        x => Err(LangErr {
+                            loc: *loc,
+                            err: format!("expected function arguments, found {:?}", x),
+                        })?,
+                    }
+                }
+                Ok(Expr::Lambda(args, Box::new(parse_expr(tokens)?)))
             }
             x => Err(LangErr {
                 loc: *loc,
@@ -466,6 +496,18 @@ fn parse_statement(
                         lexer::Kw::Pass => (Statement::Pass, 0),
                         lexer::Kw::Break => (Statement::Break, 0),
                         lexer::Kw::Continue => (Statement::Continue, 0),
+                        lexer::Kw::Return => {
+                            (Statement::Return(match tokens.clone().next() {
+                                Some((lexer::Token::NewLine, _)) => None,
+                                None => {
+                                    Err(LangErr {
+                                        loc : *loc,
+                                        err : "expected newline/enter or expression after 'return'".to_string()
+                                    })?
+                                },
+                                _ => Some(parse_expr(tokens)?)
+                            }), 0)
+                        },
                         lexer::Kw::If => {
                             expect_newline = false;
                             let condition = parse_expr(tokens)?;
@@ -537,7 +579,46 @@ fn parse_statement(
                                 err: "Found an `in` but it doesn't seem to be part of a for loop.".to_string()
                             })?
                         },
-                        lexer::Kw::And | lexer::Kw::Or => (Statement::Expr(parse_expr(&mut tokens)?), 0)
+                        lexer::Kw::Fn => {
+                            expect_newline = false;
+                            let name = expect!(tokens, lexer::Token::Ident(x) => x, "expected function to have a name")?.clone();
+                            expect!(tokens, lexer::Token::Punc(lexer::Punc::ParenLeft), "expected '('")?;
+                            let mut args = vec![];
+                            let mut comma = true;
+                            loop {
+                                match tokens.next().map(|(x, _)| x) {
+                                    Some(lexer::Token::Punc(lexer::Punc::Comma)) => {
+                                        comma = true;
+                                    },
+                                    Some(lexer::Token::Punc(lexer::Punc::ParenRight)) => {
+                                        expect!(tokens, lexer::Token::Punc(lexer::Punc::Colon), "expected ':'")?;
+                                        break;
+                                    }
+                                    Some(lexer::Token::Ident(x)) => {
+                                        if !comma {
+                                            Err(LangErr {
+                                                loc: *loc,
+                                                err: "missing comma in argument list".into()
+                                            })?
+                                        }
+                                        args.push(x.clone());
+                                        comma = false;
+                                    }
+                                    None => Err(LangErr {
+                                        loc: *loc,
+                                        err: "expected '):' at the end of function argument list".into(),
+                                    })?,
+                                    _ => Err(LangErr {
+                                        loc: *loc,
+                                        err: "expected function arguments".into(),
+                                    })?,
+                                }
+                            }
+                            expect!(tokens, lexer::Token::NewLine, "expected newline/enter after ':'")?;
+                            let (body, n) = _parse(indentation + 1, tokens)?;
+                            (Statement::Function(name, args, body), n - 1)
+                        }
+                        lexer::Kw::And | lexer::Kw::Or  => (Statement::Expr(parse_expr(&mut tokens)?), 0)
                     },
                     _ => (Statement::Expr(parse_expr(&mut tokens)?), 0)
                 }
@@ -586,6 +667,22 @@ mod tests {
     #[test]
     fn test_parse_assignment() {
         let program = "x = 5";
+        let tokens = lexer::tokenize(program).unwrap();
+        let parsed = parse(&mut tokens.iter()).unwrap();
+        println!("{:?}", parsed);
+    }
+
+    #[test]
+    fn test_parse_lambda() {
+        let program = "x = fn a: a + 1";
+        let tokens = lexer::tokenize(program).unwrap();
+        let parsed = parse(&mut tokens.iter()).unwrap();
+        println!("{:?}", parsed);
+    }
+
+    #[test]
+    fn test_parse_function() {
+        let program = include_str!("../../test-spells/fn.spell");
         let tokens = lexer::tokenize(program).unwrap();
         let parsed = parse(&mut tokens.iter()).unwrap();
         println!("{:?}", parsed);

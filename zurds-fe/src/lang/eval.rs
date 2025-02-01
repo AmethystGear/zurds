@@ -1,13 +1,16 @@
 use std::{
     cell::RefCell,
     collections::HashMap,
+    fmt::Debug,
     ops::{Deref, DerefMut},
     rc::Rc,
 };
 
 use gloo_utils::format::JsValueSerdeExt;
+use itertools::Itertools;
 use serde_json::json;
 use wasm_bindgen::JsValue;
+use web_sys::js_sys::Math::exp;
 
 use super::{
     lexer::{self, AssignOp, Literal},
@@ -25,47 +28,88 @@ pub fn eval_expr<'a>(
             Literal::Bool(b) => Val::Bool(*b),
             Literal::String(s) => Val::String(s.clone()),
         }))),
-        Expr::Call(ident, vec) => {
+        Expr::Call(fn_name, vec) => {
             let args: Result<Vec<_>, _> = vec.iter().map(|expr| eval_expr(expr, ctx)).collect();
-            let args: Vec<_> = args?.into_iter().map(|x| x.borrow().clone()).collect();
-            Ok(Rc::new(RefCell::new(match (&ident[..], &args[..]) {
-                ("print", [Val::String(s)]) => {
-                    // this if check exists so that we can locally run test code that prints to console.
-                    if cfg!(any(target_family = "wasm")) {
-                        web_sys::console::log_1(&s.into());
-                    } else {
-                        println!("{}", s);
+            let args = args?;
+            let cannot_invoke = ControlFlow::Error(EvalError::Program(format!(
+                "cannot invoke function '{}' with arguments {}",
+                fn_name,
+                Val::List(args.clone())
+            )));
+
+            let builtins = ["print", "exit", "err", "not"];
+            if builtins.contains(&&fn_name[..]) {
+                let args: Vec<_> = args.iter().map(|x| x.borrow().clone()).collect();
+                Ok(Rc::new(RefCell::new(match (&fn_name[..], &args[..]) {
+                    ("print", [Val::String(s)]) => {
+                        // this if check exists so that we can locally run test code that prints to console.
+                        if cfg!(any(target_family = "wasm")) {
+                            web_sys::console::log_1(&s.into());
+                        } else {
+                            println!("{}", s);
+                        }
+                        Ok(Val::Unit)
                     }
-                    Ok(Val::Unit)
-                }
-                ("print", [v]) => {
-                    // this if check exists so that we can locally run test code that prints to console.
-                    if cfg!(any(target_family = "wasm")) {
-                        match v.to_json() {
-                            Ok(json) => {
-                                web_sys::console::log_1(&JsValue::from_serde(&json).unwrap());
-                            },
-                            Err(_) => {
-                                let s = format!("{}", v);
-                                web_sys::console::log_1(&s.into());
+                    ("print", [v]) => {
+                        // this if check exists so that we can locally run test code that prints to console.
+                        if cfg!(any(target_family = "wasm")) {
+                            match v.to_json() {
+                                Ok(json) => {
+                                    web_sys::console::log_1(&JsValue::from_serde(&json).unwrap());
+                                }
+                                Err(_) => {
+                                    let s = format!("{}", v);
+                                    web_sys::console::log_1(&s.into());
+                                }
+                            }
+                        } else {
+                            println!("{}", v);
+                        }
+                        Ok(Val::Unit)
+                    }
+                    ("exit", []) => Err(ControlFlow::Exit),
+                    ("err", [Val::String(s)]) => {
+                        Err(ControlFlow::Error(EvalError::Custom(s.to_string())))
+                    }
+                    ("not", [Val::Bool(b)]) => Ok(Val::Bool(!b)),
+                    _ => Err(cannot_invoke)
+                }?)))
+            } else {
+
+    
+                let function = ctx.get(fn_name).map(|x| x.borrow());
+                let res = if let Some(function) = function {
+                    let function = function.deref();
+                    match function {
+                        Val::Function(argument_names, program) => {
+                            if argument_names.len() != args.len() {
+                                return Err(cannot_invoke);
+                            }
+                            let mut function_ctx = HashMap::new();
+                            for (name, value) in argument_names.iter().zip(args) {
+                                function_ctx.insert(name.clone(), value);
+                            }
+                            match eval(&program, &mut function_ctx) {
+                                Ok(()) => Ok(Rc::new(RefCell::new(Val::Unit))),
+                                Err(ControlFlow::Return(val)) => Ok(val),
+                                Err(ControlFlow::Break | ControlFlow::Continue) => {
+                                    Err(ControlFlow::Error(EvalError::Program(
+                                        "called break or continue outside of loop".into(),
+                                    )))
+                                }
+                                Err(e) => Err(e),
                             }
                         }
-                    } else {
-                        println!("{}", v);
+                        x => Err(ControlFlow::Error(EvalError::Program(format!(
+                            "{:?} is not a function, but is being called.",
+                            x
+                        )))),
                     }
-                    Ok(Val::Unit)
-                }
-                ("exit", []) => Err(ControlFlow::Exit),
-                ("err", [Val::String(s)]) => {
-                    Err(ControlFlow::Error(EvalError::Custom(s.to_string())))
-                }
-                ("not", [Val::Bool(b)]) => Ok(Val::Bool(!b)),
-                (fn_name, args) => Err(ControlFlow::Error(EvalError::Program(format!(
-                    "cannot invoke function '{}' with arguments {}",
-                    fn_name,
-                    args.iter().map(|x| format!("{},", x)).collect::<String>()
-                )))),
-            }?)))
+                } else {
+                    Err(cannot_invoke)
+                };
+                return res;
+            }
         }
         Expr::List(vec) => {
             let elems: Result<Vec<_>, _> =
@@ -320,15 +364,20 @@ pub fn eval_expr<'a>(
                     ident
                 ))))?)
         }
+        Expr::Lambda(args, expr) => Ok(Rc::new(RefCell::new(Val::Function(
+            args.clone(),
+            vec![Statement::Return(Some(*expr.clone()))],
+        )))),
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum ControlFlow {
     Continue,
     Break,
     Exit,
     Error(EvalError),
+    Return(Rc<RefCell<Val>>),
 }
 
 enum Path<'a> {
@@ -391,6 +440,9 @@ pub fn eval(
                                     Err(ControlFlow::Error(e)) => {
                                         return Err(ControlFlow::Error(e))
                                     }
+                                    Err(ControlFlow::Return(x)) => {
+                                        return Err(ControlFlow::Return(x))
+                                    }
                                 }
                             }
                         }
@@ -419,6 +471,7 @@ pub fn eval(
                             Err(ControlFlow::Continue) | Ok(()) => {}
                             Err(ControlFlow::Exit) => return Err(ControlFlow::Exit),
                             Err(ControlFlow::Error(e)) => return Err(ControlFlow::Error(e)),
+                            Err(ControlFlow::Return(x)) => return Err(ControlFlow::Return(x)),
                         }
                     }
                 }
@@ -484,8 +537,22 @@ pub fn eval(
                     Err(ControlFlow::Continue) | Ok(()) => {}
                     Err(ControlFlow::Exit) => return Err(ControlFlow::Exit),
                     Err(ControlFlow::Error(e)) => return Err(ControlFlow::Error(e)),
+                    Err(ControlFlow::Return(x)) => return Err(ControlFlow::Return(x)),
                 }
             },
+            Statement::Return(expr) => {
+                if let Some(expr) = expr {
+                    return Err(ControlFlow::Return(eval_expr(expr, ctx)?));
+                } else {
+                    return Err(ControlFlow::Return(Rc::new(RefCell::new(Val::Unit))));
+                }
+            }
+            Statement::Function(name, args, body) => {
+                ctx.insert(
+                    name.clone(),
+                    Rc::new(RefCell::new(Val::Function(args.clone(), body.clone()))),
+                );
+            }
         }
     }
     Ok(())
@@ -543,6 +610,8 @@ pub enum Val {
     Dict(HashMap<String, Rc<RefCell<Val>>>),
     Opt(Option<Rc<RefCell<Val>>>),
     Res(Result<Rc<RefCell<Val>>, Rc<RefCell<Val>>>),
+    // code
+    Function(Vec<String>, Vec<Statement>),
 }
 
 pub fn to_json(x: &Rc<RefCell<Val>>) -> Result<serde_json::Value, String> {
@@ -639,7 +708,8 @@ impl Val {
                 Some(json) => to_json(json),
                 None => Ok(serde_json::Value::Null),
             },
-            Val::Res(res) => Err(format!("cannot serialize result to json")),
+            Val::Res(_) => Err(format!("cannot serialize result to json")),
+            Val::Function(_, _) => Err(format!("cannot serialize function to json")),
         }
     }
 
@@ -705,7 +775,16 @@ impl Val {
                     Err(_) => format!("Err({})", s),
                 }
             }
+            Val::Function(args, _) => {
+                format!("fn ({})", args.join(","))
+            }
         }
+    }
+}
+
+impl Debug for Val {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.str())
     }
 }
 
@@ -971,5 +1050,14 @@ mod tests {
             });
             assert_eq!(board, expected_json);
         }
+    }
+
+    #[test]
+    fn test_run_function() {
+        let mut ctx: HashMap<String, Rc<RefCell<Val>>> = HashMap::new();
+        let program = include_str!("../../test-spells/fn.spell");
+        let tokens = lexer::tokenize(program).unwrap();
+        let statements = parse(&mut tokens.iter()).unwrap();
+        eval(&statements, &mut ctx).unwrap();
     }
 }

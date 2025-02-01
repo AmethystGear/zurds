@@ -9,7 +9,7 @@ version = "0.0.0"
 crate-type = ["cdylib"]
 
 [dependencies]
-wasm-bindgen = "0.2.93"
+wasm-bindgen = "0.2.100"
 web-sys = { version = "0.3.70", features = ["Document", "Element", "HtmlElement", "Node", "Window", "console", "RtcPeerConnection", "RtcDataChannel"] }
 phf = { version = "0.11.2", features = ["macros"] }
 escape8259 = "0.5.3"
