@@ -322,11 +322,19 @@ pub fn tokenize(s: &str) -> Result<Vec<(Token, Loc)>, LangErr> {
                     spaces += 1;
                 }
             }
+            // if there is no real indentation, just skip the whitespace and continue.
+            if spaces < INDENT_SIZE {
+                col += spaces;
+                for _ in 0..spaces {
+                    chars.next();
+                }
+                continue;
+            }
             let indents = spaces / INDENT_SIZE;
-            // each ' ' is 1 byte so indexing indents * 4 onwards is okay to do
-            chars = chars.as_str()[indents * 4..].chars();
-            tokens.extend((0..indents).map(|i| (Token::Indent, Loc {col : i * 4, line, len: 4})));
-            col += indents * 4;
+            // each ' ' is 1 byte so indexing indents * INDENT_SIZE onwards is okay to do
+            chars = chars.as_str()[indents * INDENT_SIZE..].chars();
+            tokens.extend((0..indents).map(|i| (Token::Indent, Loc {col : i * INDENT_SIZE, line, len: INDENT_SIZE})));
+            col += indents * INDENT_SIZE;
             continue;
         }
 
