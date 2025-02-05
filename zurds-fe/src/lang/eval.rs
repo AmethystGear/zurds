@@ -246,7 +246,7 @@ pub fn eval_expr<'a>(
                             },
                             (Val::List(list), "len", []) => Val::Int(list.len() as i64),
                             (Val::List(list), "map", [Val::Function(args, program)]) => {
-                                if args.len() > 1 {
+                                if args.len() != 1 {
                                     return Err(ControlFlow::Error(EvalError::Program(
                                         "map expects a function with one argument".to_string(),
                                     )));
@@ -269,7 +269,7 @@ pub fn eval_expr<'a>(
                                 Val::List(mapped_list)
                             }
                             (Val::List(list), "filter", [Val::Function(args, program)]) => {
-                                if args.len() > 1 {
+                                if args.len() != 1 {
                                     return Err(ControlFlow::Error(EvalError::Program(
                                         "filter expects a function with one argument".to_string(),
                                     )));
