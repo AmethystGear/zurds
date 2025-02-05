@@ -1,10 +1,10 @@
 # assignments like this should result in infinite data structures
-y = []
-x = {}
+x = {}; y = []
 x.['y'] = y
 y.add(x)
 
-# add-assigns should not result in infinite data structures
+# add-assigns should not result in infinite data structures, 
+# because we create a new data structure, add everything to it, and replace the original
 a = [[], 1, 2]
 a.[0] += a 
 
