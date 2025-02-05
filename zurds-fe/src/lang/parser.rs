@@ -1,6 +1,6 @@
 use super::{
     err::{LangErr, Loc},
-    lexer::{self, AssignOp, Token},
+    lexer::{self, AssignOp, Op, Token},
 };
 use std::slice::Iter;
 
@@ -9,11 +9,7 @@ pub enum BinOp {
     Op(lexer::Op),
     And,
     Or,
-}
-
-pub enum Fn {
-    Lambda(Vec<lexer::Ident>, Expr),
-    Function(Vec<lexer::Ident>, Vec<Statement>)
+    Chain
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -25,6 +21,7 @@ pub enum Expr {
     BinOp(Box<Expr>, BinOp, Box<Expr>),
     Var(lexer::Ident),
     Lambda(Vec<lexer::Ident>, Box<Expr>),
+    Assign(Box<Assign>, Option<AssignOp>, Box<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -44,13 +41,12 @@ pub enum Statement {
     If(Expr, Vec<Statement>, Vec<Statement>),
     For(lexer::Ident, Option<lexer::Ident>, Expr, Vec<Statement>),
     Loop(Vec<Statement>),
-    Assign(Assign, Option<AssignOp>, Expr),
     Expr(Expr),
     Continue,
     Break,
     Pass,
     Return(Option<Expr>),
-    Function(lexer::Ident, Vec<lexer::Ident>, Vec<Statement>)
+    Function(lexer::Ident, Vec<lexer::Ident>, Vec<Statement>),
 }
 
 const PRECEDENCE: [BinOp; 15] = [
@@ -242,7 +238,7 @@ fn parse_primary(tokens: &mut Iter<'_, (lexer::Token, Loc)>) -> Result<Expr, Lan
                         })?,
                     }
                 }
-                Ok(Expr::Lambda(args, Box::new(parse_expr(tokens)?)))
+                Ok(Expr::Lambda(args, Box::new(parse_chain_or_assignment_or_expr(tokens)?)))
             }
             x => Err(LangErr {
                 loc: *loc,
@@ -409,220 +405,197 @@ fn _parse(
     Ok((statements, indentation))
 }
 
+fn parse_assignment_or_expr(mut tokens: &mut Iter<'_, (lexer::Token, Loc)>,) -> Result<Expr, LangErr> {
+    let assignment_expr = parse_expr(&mut tokens)?;
+    let err = Err(LangErr {
+        loc: tokens.clone().next().expect("bug: parse_expr should never consume till EOF").1,
+        err: "expected assignment to be like 'somevar = <...>' or '<...>.somefield = <...>'  or '<...>.[<some expression>] = <...>'".to_string(),
+    });
+    let assign = match assignment_expr.clone() {
+        Expr::BinOp(left, BinOp::Op(lexer::Op::Access), right) => match *right {
+            Expr::List(mut vec) => match (vec.pop(), vec.pop()) {
+                (Some(expr), None) => Ok(Assign::Field(*left, Field::Index(expr))),
+                _ => err,
+            },
+            Expr::Var(ident) => Ok(Assign::Field(*left, Field::Var(ident))),
+            _ => err,
+        },
+        Expr::Var(ident) => Ok(Assign::Var(ident)),
+        _ => err,
+    };
+
+    match (assign, tokens.clone().next().map(|(token, _)| token.clone())) {
+        (Ok(assign), Some(Token::Assign(op))) => {
+            tokens.next();
+            let evaluation_expr = parse_expr(&mut tokens)?;
+            Ok(Expr::Assign(Box::new(assign), op, Box::new(evaluation_expr)))
+        },
+        (Err(assign), Some(Token::Assign(_))) => Err(assign),
+        (_, _) => {
+            Ok(assignment_expr)
+        }
+    }
+}
+
+fn parse_chain_or_assignment_or_expr(mut tokens: &mut Iter<'_, (lexer::Token, Loc)>,) -> Result<Expr, LangErr> {
+    let expr = parse_assignment_or_expr(&mut tokens)?;
+    match tokens.clone().next().map(|(token, _)| token.clone()) {
+        Some(Token::Chain) => {
+            tokens.next();
+            Ok(Expr::BinOp(Box::new(expr), BinOp::Chain, Box::new(parse_chain_or_assignment_or_expr(tokens)?)))
+        },
+        _ => Ok(expr),
+    }
+}
+
 fn parse_statement(
     indentation: usize,
     mut tokens: &mut Iter<'_, (lexer::Token, Loc)>,
 ) -> Result<(Statement, usize), LangErr> {
     let mut expect_newline = true;
     let statement = match tokens.clone().next() {
-        Some(token_loc) => {
-            let mut assignment = false;
-            let mut lineloc = Loc {
-                col: 0,
-                line: 0,
-                len: 0,
+        Some((token, loc)) => {
+            match token {
+                lexer::Token::Kw(lexer::Kw::And | lexer::Kw::Or) => {},
+                lexer::Token::Kw(_) => {
+                    tokens.next();
+                },
+                _ => {},
             };
-            for (i, (token, loc)) in std::iter::once(token_loc)
-                .chain(&mut tokens.clone())
-                .enumerate()
-            {
-                if i == 0 {
-                    lineloc.col = loc.col;
-                    lineloc.line = loc.line;
-                }
-                lineloc.len += loc.len;
-                match token {
-                    Token::NewLine => break,
-                    Token::Assign(op) => {
-                        if assignment {
-                            Err(LangErr {
-                                loc: *loc,
-                                err: format!(
-                                    "Multiple assignments on a single line. \
-                                Did you mean to use '==' (check for equality) instead of '{}='? \
-                                If not, split the assignments onto multiple lines.",
-                                    match op {
-                                        Some(op) => match op {
-                                            lexer::AssignOp::Add => "+",
-                                            lexer::AssignOp::Sub => "-",
-                                            lexer::AssignOp::Mul => "*",
-                                            lexer::AssignOp::Div => "/",
-                                        },
-                                        None => "",
-                                    }
-                                ),
-                            })?
-                        } else {
-                            assignment = true;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            if assignment {
-                let assignment_expr = parse_expr(&mut tokens)?;
-                let err = Err(LangErr {
-                    loc: lineloc,
-                    err: "expected assignment to be like 'somevar = <...>' or '<...>.somefield = <...>'  or '<...>.[<some expression>] = <...>'".to_string(),
-                });
-                let assign: Assign = match assignment_expr {
-                    Expr::BinOp(left, BinOp::Op(lexer::Op::Access), right) => match *right {
-                        Expr::List(mut vec) => match (vec.pop(), vec.pop()) {
-                            (Some(expr), None) => Ok(Assign::Field(*left, Field::Index(expr))),
-                            _ => err,
-                        },
-                        Expr::Var(ident) => Ok(Assign::Field(*left, Field::Var(ident))),
-                        _ => err,
+            match token {
+                lexer::Token::Kw(kw) => match kw {
+                    lexer::Kw::Pass => (Statement::Pass, 0),
+                    lexer::Kw::Break => (Statement::Break, 0),
+                    lexer::Kw::Continue => (Statement::Continue, 0),
+                    lexer::Kw::Return => {
+                        (Statement::Return(match tokens.clone().next() {
+                            Some((lexer::Token::NewLine, _)) => None,
+                            None => {
+                                Err(LangErr {
+                                    loc : *loc,
+                                    err : "expected newline/enter or expression after 'return'".to_string()
+                                })?
+                            },
+                            _ => Some(parse_expr(tokens)?)
+                        }), 0)
                     },
-                    Expr::Var(ident) => Ok(Assign::Var(ident)),
-                    _ => err,
-                }?;
-                let operator = expect!(tokens, Token::Assign(x) => x,
-                    "expected one of '=,+=,-=,*=,/=' here... do you have multiple expressions before the '='?")?;
-                let evaluation_expr = parse_expr(&mut tokens)?;
-                (
-                    Statement::Assign(assign, operator.clone(), evaluation_expr),
-                    0,
-                )
-            } else {
-                let (token, loc) = token_loc;
-                match token {
-                    lexer::Token::Kw(lexer::Kw::And | lexer::Kw::Or) => None,
-                    lexer::Token::Kw(_) => tokens.next(),
-                    _ => None,
-                };
-                match token {
-                    lexer::Token::Kw(kw) => match kw {
-                        lexer::Kw::Pass => (Statement::Pass, 0),
-                        lexer::Kw::Break => (Statement::Break, 0),
-                        lexer::Kw::Continue => (Statement::Continue, 0),
-                        lexer::Kw::Return => {
-                            (Statement::Return(match tokens.clone().next() {
-                                Some((lexer::Token::NewLine, _)) => None,
-                                None => {
+                    lexer::Kw::If => {
+                        expect_newline = false;
+                        let condition = parse_expr(tokens)?;
+                        expect!(tokens, lexer::Token::Punc(lexer::Punc::Colon), "expected ':' at the end of if condition")?;
+                        expect!(tokens, lexer::Token::NewLine, "expected newline/enter after ':'")?;
+                        let (true_case, n) = _parse(indentation + 1, tokens)?;
+                        let real_indentation = (indentation + 1) - n;
+                        match tokens.clone().skip(real_indentation).next() {
+                            Some((lexer::Token::Kw(lexer::Kw::Else), loc)) => {
+                                if real_indentation != indentation {
                                     Err(LangErr {
                                         loc : *loc,
-                                        err : "expected newline/enter or expression after 'return'".to_string()
-                                    })?
+                                        err : "`else` is incorrectly indented. make sure it's at the same indentation level as the `if`.".to_string()
+                                    })?;
+                                }
+                                for _ in 0..=real_indentation {
+                                    tokens.next();
+                                }
+                                expect!(tokens, lexer::Token::Punc(lexer::Punc::Colon), "expected ':' after `else`")?;
+                                expect!(tokens, lexer::Token::NewLine, "expected newline/enter after ':'")?;
+                                let (false_case, n) = _parse(indentation + 1, tokens)?;
+                                (Statement::If(condition, true_case, false_case), n - 1)
+                            }
+                            _ => (Statement::If(condition, true_case, vec![]), n - 1),
+                        }
+                    }
+                    lexer::Kw::For => {
+                        expect_newline = false;
+                        let var = expect!(tokens, lexer::Token::Ident(x) => x, "expected variable, e.g. `for x in 0..10:`...")?;
+                        let second_var = {
+                            let mut tokens_clone = tokens.clone();
+                            let second_var = match tokens_clone.next() {
+                                Some((lexer::Token::Punc(lexer::Punc::Comma), _)) => {
+                                    Some(expect!(tokens_clone, lexer::Token::Ident(x) => x, "expected variable after comma, e.g. `for x, y in dictionary:`...")?.clone())
                                 },
-                                _ => Some(parse_expr(tokens)?)
-                            }), 0)
-                        },
-                        lexer::Kw::If => {
-                            expect_newline = false;
-                            let condition = parse_expr(tokens)?;
-                            expect!(tokens, lexer::Token::Punc(lexer::Punc::Colon), "expected ':' at the end of if condition")?;
-                            expect!(tokens, lexer::Token::NewLine, "expected newline/enter after ':'")?;
-                            let (true_case, n) = _parse(indentation + 1, tokens)?;
-                            let real_indentation = (indentation + 1) - n;
-                            match tokens.clone().skip(real_indentation).next() {
-                                Some((lexer::Token::Kw(lexer::Kw::Else), loc)) => {
-                                    if real_indentation != indentation {
-                                        Err(LangErr {
-                                            loc : *loc,
-                                            err : "`else` is incorrectly indented. make sure it's at the same indentation level as the `if`.".to_string()
-                                        })?;
-                                    }
-                                    for _ in 0..=real_indentation {
-                                        tokens.next();
-                                    }
-                                    expect!(tokens, lexer::Token::Punc(lexer::Punc::Colon), "expected ':' after `else`")?;
-                                    expect!(tokens, lexer::Token::NewLine, "expected newline/enter after ':'")?;
-                                    let (false_case, n) = _parse(indentation + 1, tokens)?;
-                                    (Statement::If(condition, true_case, false_case), n - 1)
-                                }
-                                _ => (Statement::If(condition, true_case, vec![]), n - 1),
-                            }
-                        }
-                        lexer::Kw::For => {
-                            expect_newline = false;
-                            let var = expect!(tokens, lexer::Token::Ident(x) => x, "expected variable, e.g. `for x in 0..10:`...")?;
-                            let second_var = {
-                                let mut tokens_clone = tokens.clone();
-                                let second_var = match tokens_clone.next() {
-                                    Some((lexer::Token::Punc(lexer::Punc::Comma), _)) => {
-                                        Some(expect!(tokens_clone, lexer::Token::Ident(x) => x, "expected variable after comma, e.g. `for x, y in dictionary:`...")?.clone())
-                                    },
-                                    _ => None,
-                                };
-                                if second_var.is_some() {
-                                    tokens.next();
-                                    tokens.next();
-                                }
-                                second_var
+                                _ => None,
                             };
-                            expect!(tokens, lexer::Token::Kw(lexer::Kw::In), "expected 'in', e.g. `for x in 0..10:`...")?;
-                            let expr = parse_expr(tokens)?;
-                            expect!(tokens, lexer::Token::Punc(lexer::Punc::Colon), "expected ':' after loop expression, e.g. `for x in 0..10:`...")?;
-                            expect!(tokens, lexer::Token::NewLine, "expected newline/enter after ':'")?;
-                            let (block, n) = _parse(indentation + 1, tokens)?;
-                            (Statement::For(var.to_string(), second_var, expr, block), n - 1)
-                        }
-                        lexer::Kw::Loop => {
-                            expect_newline = false;
-                            expect!(tokens, lexer::Token::Punc(lexer::Punc::Colon), "expected ':' after loop, e.g. `loop:`...")?;
-                            expect!(tokens, lexer::Token::NewLine, "expected newline/enter after ':'")?;
-                            let (block, n) = _parse(indentation + 1, tokens)?;
-                            (Statement::Loop(block), n - 1)
-                        },
-                        lexer::Kw::Else => {
-                            Err(LangErr {
-                                loc: *loc,
-                                err: "Found an `else`, but it doesn't seem to be attached to an if statement. \
-                                Check your indentation (if and else should be indented the same amount), \
-                                and make sure there is an `if` before the `else`.".to_string()
-                            })?
-                        },
-                        lexer::Kw::In => {
-                            Err(LangErr {
-                                loc: *loc,
-                                err: "Found an `in` but it doesn't seem to be part of a for loop.".to_string()
-                            })?
-                        },
-                        lexer::Kw::Fn => {
-                            expect_newline = false;
-                            let name = expect!(tokens, lexer::Token::Ident(x) => x, "expected function to have a name")?.clone();
-                            expect!(tokens, lexer::Token::Punc(lexer::Punc::ParenLeft), "expected '('")?;
-                            let mut args = vec![];
-                            let mut comma = true;
-                            loop {
-                                match tokens.next().map(|(x, _)| x) {
-                                    Some(lexer::Token::Punc(lexer::Punc::Comma)) => {
-                                        comma = true;
-                                    },
-                                    Some(lexer::Token::Punc(lexer::Punc::ParenRight)) => {
-                                        expect!(tokens, lexer::Token::Punc(lexer::Punc::Colon), "expected ':'")?;
-                                        break;
-                                    }
-                                    Some(lexer::Token::Ident(x)) => {
-                                        if !comma {
-                                            Err(LangErr {
-                                                loc: *loc,
-                                                err: "missing comma in argument list".into()
-                                            })?
-                                        }
-                                        args.push(x.clone());
-                                        comma = false;
-                                    }
-                                    None => Err(LangErr {
-                                        loc: *loc,
-                                        err: "expected '):' at the end of function argument list".into(),
-                                    })?,
-                                    _ => Err(LangErr {
-                                        loc: *loc,
-                                        err: "expected function arguments".into(),
-                                    })?,
-                                }
+                            if second_var.is_some() {
+                                tokens.next();
+                                tokens.next();
                             }
-                            expect!(tokens, lexer::Token::NewLine, "expected newline/enter after ':'")?;
-                            let (body, n) = _parse(indentation + 1, tokens)?;
-                            (Statement::Function(name, args, body), n - 1)
-                        }
-                        lexer::Kw::And | lexer::Kw::Or  => (Statement::Expr(parse_expr(&mut tokens)?), 0)
+                            second_var
+                        };
+                        expect!(tokens, lexer::Token::Kw(lexer::Kw::In), "expected 'in', e.g. `for x in 0..10:`...")?;
+                        let expr = parse_expr(tokens)?;
+                        expect!(tokens, lexer::Token::Punc(lexer::Punc::Colon), "expected ':' after loop expression, e.g. `for x in 0..10:`...")?;
+                        expect!(tokens, lexer::Token::NewLine, "expected newline/enter after ':'")?;
+                        let (block, n) = _parse(indentation + 1, tokens)?;
+                        (Statement::For(var.to_string(), second_var, expr, block), n - 1)
+                    }
+                    lexer::Kw::Loop => {
+                        expect_newline = false;
+                        expect!(tokens, lexer::Token::Punc(lexer::Punc::Colon), "expected ':' after loop, e.g. `loop:`...")?;
+                        expect!(tokens, lexer::Token::NewLine, "expected newline/enter after ':'")?;
+                        let (block, n) = _parse(indentation + 1, tokens)?;
+                        (Statement::Loop(block), n - 1)
                     },
-                    _ => (Statement::Expr(parse_expr(&mut tokens)?), 0)
+                    lexer::Kw::Else => {
+                        Err(LangErr {
+                            loc: *loc,
+                            err: "Found an `else`, but it doesn't seem to be attached to an if statement. \
+                            Check your indentation (if and else should be indented the same amount), \
+                            and make sure there is an `if` before the `else`.".to_string()
+                        })?
+                    },
+                    lexer::Kw::In => {
+                        Err(LangErr {
+                            loc: *loc,
+                            err: "Found an `in` but it doesn't seem to be part of a for loop.".to_string()
+                        })?
+                    },
+                    lexer::Kw::Fn => {
+                        expect_newline = false;
+                        let name = expect!(tokens, lexer::Token::Ident(x) => x, "expected function to have a name")?.clone();
+                        expect!(tokens, lexer::Token::Punc(lexer::Punc::ParenLeft), "expected '('")?;
+                        let mut args = vec![];
+                        let mut comma = true;
+                        loop {
+                            match tokens.next().map(|(x, _)| x) {
+                                Some(lexer::Token::Punc(lexer::Punc::Comma)) => {
+                                    comma = true;
+                                },
+                                Some(lexer::Token::Punc(lexer::Punc::ParenRight)) => {
+                                    expect!(tokens, lexer::Token::Punc(lexer::Punc::Colon), "expected ':'")?;
+                                    break;
+                                }
+                                Some(lexer::Token::Ident(x)) => {
+                                    if !comma {
+                                        Err(LangErr {
+                                            loc: *loc,
+                                            err: "missing comma in argument list".into()
+                                        })?
+                                    }
+                                    args.push(x.clone());
+                                    comma = false;
+                                }
+                                None => Err(LangErr {
+                                    loc: *loc,
+                                    err: "expected '):' at the end of function argument list".into(),
+                                })?,
+                                _ => Err(LangErr {
+                                    loc: *loc,
+                                    err: "expected function arguments".into(),
+                                })?,
+                            }
+                        }
+                        expect!(tokens, lexer::Token::NewLine, "expected newline/enter after ':'")?;
+                        let (body, n) = _parse(indentation + 1, tokens)?;
+                        (Statement::Function(name, args, body), n - 1)
+                    }
+                    lexer::Kw::And | lexer::Kw::Or  => (Statement::Expr(parse_expr(&mut tokens)?), 0)
+                },
+                _ => {
+                    (Statement::Expr(parse_chain_or_assignment_or_expr(&mut tokens)?), 0)
                 }
             }
+            
         }
         None => panic!("bug"),
     };
@@ -685,6 +658,14 @@ mod tests {
         let program = include_str!("../../test-spells/fn.spell");
         let tokens = lexer::tokenize(program).unwrap();
         let parsed = parse(&mut tokens.iter()).unwrap();
+        println!("{:?}", parsed);
+    }
+
+    #[test]
+    fn test_parse_assignment_lambda() {
+        let program = "fn x: x.health -= 1; x";
+        let tokens = lexer::tokenize(program).unwrap();
+        let parsed = parse_expr(&mut tokens.iter()).unwrap();
         println!("{:?}", parsed);
     }
 }

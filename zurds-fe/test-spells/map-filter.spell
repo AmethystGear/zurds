@@ -1,0 +1,4 @@
+x = [{'a' : 5, 'b' : 6}, {'a' : 3, 'b' : 1}]
+y = x.map(fn x: x.a -= x.b; x).filter(fn x: x.a > 0)
+print(x.str())
+print(y.str())

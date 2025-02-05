@@ -1,18 +1,11 @@
-
 fn example_fn(x):
     if x:
         return fn z: 2 * z + 1
     else:
         return fn x: x * x
 
-
 closure = example_fn(true)
 a = closure(100)
 closure = example_fn(false)
 b = closure(100)
-print({'a' : a, 'b' : b})
-
-
-
-
-fn x: x.health -= 1
+c = {'a' : a, 'b' : b}

@@ -1,4 +1,12 @@
+# assignments like this should result in infinite data structures
 y = []
 x = {}
 x.['y'] = y
 y.add(x)
+
+# add-assigns should not result in infinite data structures
+a = [[], 1, 2]
+a.[0] += a 
+
+b = {'test' : 0, 'test_1' : {}}
+b.test_1 += b

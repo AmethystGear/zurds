@@ -72,6 +72,7 @@ const OP: Map<&str, Token> = phf_map!(
     "-=" => Token::Assign(Some(AssignOp::Sub)),
     "*=" => Token::Assign(Some(AssignOp::Mul)),
     "/=" => Token::Assign(Some(AssignOp::Div)),
+    ";" => Token::Chain
 );
 
 #[derive(Clone, Copy, Debug)]
@@ -122,7 +123,8 @@ pub enum Token {
     Kw(Kw),
     Literal(Literal),
     Ident(Ident),
-    Assign(Option<AssignOp>)
+    Assign(Option<AssignOp>),
+    Chain
 }
 
 pub type Ident = String;

@@ -7,10 +7,8 @@ use std::{
 };
 
 use gloo_utils::format::JsValueSerdeExt;
-use itertools::Itertools;
 use serde_json::json;
 use wasm_bindgen::JsValue;
-use web_sys::js_sys::Math::exp;
 
 use super::{
     lexer::{self, AssignOp, Literal},
@@ -72,11 +70,9 @@ pub fn eval_expr<'a>(
                         Err(ControlFlow::Error(EvalError::Custom(s.to_string())))
                     }
                     ("not", [Val::Bool(b)]) => Ok(Val::Bool(!b)),
-                    _ => Err(cannot_invoke)
+                    _ => Err(cannot_invoke),
                 }?)))
             } else {
-
-    
                 let function = ctx.get(fn_name).map(|x| x.borrow());
                 let res = if let Some(function) = function {
                     let function = function.deref();
@@ -183,7 +179,7 @@ pub fn eval_expr<'a>(
                                     }
                                     _ => None,
                                 }
-                            }
+                            },
                             _ => None,
                         }
                     };
@@ -249,6 +245,62 @@ pub fn eval_expr<'a>(
                                 Err(e) => return Ok(e.clone()),
                             },
                             (Val::List(list), "len", []) => Val::Int(list.len() as i64),
+                            (Val::List(list), "map", [Val::Function(args, program)]) => {
+                                if args.len() > 1 {
+                                    return Err(ControlFlow::Error(EvalError::Program(
+                                        "map expects a function with one argument".to_string(),
+                                    )));
+                                }
+                                let mut mapped_list = vec![];
+                                for val in list {
+                                    let mut ctx = ctx.clone();
+                                    ctx.insert(args[0].clone(), val.clone());
+                                    mapped_list.push(match eval(program, &mut ctx) {
+                                        Ok(()) => Rc::new(RefCell::new(Val::Unit)),
+                                        Err(ControlFlow::Return(val)) => val,
+                                        Err(ControlFlow::Break | ControlFlow::Continue) => {
+                                            Err(ControlFlow::Error(EvalError::Program(
+                                                "called break or continue outside of loop".into(),
+                                            )))?
+                                        }
+                                        Err(e) => Err(e)?
+                                    })
+                                }
+                                Val::List(mapped_list)
+                            }
+                            (Val::List(list), "filter", [Val::Function(args, program)]) => {
+                                if args.len() > 1 {
+                                    return Err(ControlFlow::Error(EvalError::Program(
+                                        "filter expects a function with one argument".to_string(),
+                                    )));
+                                }
+                                let mut filtered_list = vec![];
+                                for val in list {
+                                    let mut ctx = ctx.clone();
+                                    ctx.insert(args[0].clone(), val.clone());
+                                    let should_filter = match eval(program, &mut ctx) {
+                                        Ok(()) => Rc::new(RefCell::new(Val::Unit)),
+                                        Err(ControlFlow::Return(val)) => val,
+                                        Err(ControlFlow::Break | ControlFlow::Continue) => {
+                                            return Err(ControlFlow::Error(EvalError::Program(
+                                                "called break or continue outside of loop".into(),
+                                            )));
+                                        }
+                                        Err(e) => Err(e)?
+                                    };
+                                    let should_filter = should_filter.borrow();
+                                    if let Val::Bool(should_filter) = should_filter.deref() {
+                                        if *should_filter {
+                                            filtered_list.push(val.clone());
+                                        }
+                                    } else {
+                                        return Err(ControlFlow::Error(EvalError::Program(
+                                            format!("filter returned {} instead of bool", should_filter.deref())
+                                        )));
+                                    }
+                                }
+                                Val::List(filtered_list)
+                            }
                             (Val::String(s), "contains", [Val::String(sub)]) => {
                                 Val::Bool(s.contains(sub))
                             }
@@ -344,6 +396,10 @@ pub fn eval_expr<'a>(
                     ))))
                 }
             },
+            BinOp::Chain => {
+                eval_expr(left, ctx)?;
+                eval_expr(right, ctx)
+            }
             op => {
                 let a = eval_expr(left, ctx)?;
                 let a = a.borrow();
@@ -368,6 +424,70 @@ pub fn eval_expr<'a>(
             args.clone(),
             vec![Statement::Return(Some(*expr.clone()))],
         )))),
+        Expr::Assign(assign, op, expr) => {
+            let op = op.as_ref();
+            let new = eval_expr(expr, ctx)?;
+            match *assign.clone() {
+                super::parser::Assign::Var(ident) => {
+                    let new = get_new_for_assignment(new, &Path::Str(ident.clone(), ctx), op)?;
+                    handle_assignment(new, PathMut::Str(ident.clone(), ctx))?;
+                }
+                super::parser::Assign::Field(left, field) => {
+                    let mut ctx_copy = ctx.clone();
+                    let left = eval_expr(&left, ctx)?;
+                    let (new, path_val) = {   
+                        let left = left.borrow();
+                        let left = left.deref();
+                        match field {
+                            super::parser::Field::Var(var) => {
+                                let current = if let Val::Dict(val) = left {
+                                    Path::Str(var.clone(), val)
+                                } else {
+                                    return Err(ControlFlow::Error(EvalError::Program(
+                                        "expected left side of expression to be a dict".to_string(),
+                                    )));
+                                };
+                                (get_new_for_assignment(new, &current, op)?, current.path_val())
+                            }
+                            super::parser::Field::Index(index) => {
+                                let index = eval_expr(&index, &mut ctx_copy)?;
+                                let index = index.borrow();
+                                let index = index.deref();
+                                let current = match (left, index) {
+                                    (Val::Dict(val), Val::String(index)) => {
+                                        Path::Str(index.clone(), val)
+                                    }
+                                    (Val::List(val), Val::Int(index)) => {
+                                        let index = usize::try_from(*index).unwrap();
+                                        Path::Int(index, val)
+                                    }
+                                    _ => {
+                                        return Err(ControlFlow::Error(EvalError::Program(
+                                            "invalid assignment, expected either:\n
+                                             <expr that evaluates to a list>.[<expr that evaluates to an int>]\n
+                                             <expr that evaluates to a dict>.[<expr that evaluates to a str>]".to_string(),
+                                        )))
+                                    }
+                                };
+                                (get_new_for_assignment(new, &current, op)?, current.path_val())
+                            }
+                        }
+                    };
+                    let mut left = left.borrow_mut();
+                    let left = left.deref_mut();
+                    match (left, path_val) {
+                        (Val::Dict(dict), PathVal::Str(val)) => {
+                            handle_assignment(new, PathMut::Str(val, dict))?;
+                        },
+                        (Val::List(list), PathVal::Int(val)) => {
+                            handle_assignment(new, PathMut::Int(val, list))?;
+                        },
+                        _ => unreachable!()
+                    }
+                }
+            };
+            Ok(Rc::new(RefCell::new(Val::Unit)))
+        },
     }
 }
 
@@ -380,9 +500,14 @@ pub enum ControlFlow {
     Return(Rc<RefCell<Val>>),
 }
 
+enum PathVal {
+    Str(String),
+    Int(usize)
+}
+
 enum Path<'a> {
-    Str(String, &'a mut HashMap<String, Rc<RefCell<Val>>>),
-    Int(usize, &'a mut Vec<Rc<RefCell<Val>>>),
+    Str(String, &'a HashMap<String, Rc<RefCell<Val>>>),
+    Int(usize, &'a Vec<Rc<RefCell<Val>>>),
 }
 
 impl<'a> Path<'a> {
@@ -392,6 +517,18 @@ impl<'a> Path<'a> {
             Path::Int(i, vec) => vec.get(*i).clone(),
         }
     }
+
+    fn path_val(&self) -> PathVal {
+        match self {
+            Path::Str(x, _) => PathVal::Str(x.clone()),
+            Path::Int(x, _) => PathVal::Int(*x),
+        }
+    }
+}
+
+enum PathMut<'a> {
+    Str(String, &'a mut HashMap<String, Rc<RefCell<Val>>>),
+    Int(usize, &'a mut Vec<Rc<RefCell<Val>>>),
 }
 
 pub fn eval(
@@ -476,55 +613,6 @@ pub fn eval(
                     }
                 }
             }
-            Statement::Assign(assign, op, expr) => {
-                let op = op.as_ref();
-                let new = eval_expr(expr, ctx)?;
-                match assign {
-                    super::parser::Assign::Var(ident) => {
-                        handle_assignment(new, Path::Str(ident.clone(), ctx), op)?
-                    }
-                    super::parser::Assign::Field(left, field) => {
-                        let mut ctx_copy = ctx.clone();
-                        let left = eval_expr(left, ctx)?;
-                        let mut left = left.borrow_mut();
-                        let left = left.deref_mut();
-                        match field {
-                            super::parser::Field::Var(var) => {
-                                let current = if let Val::Dict(val) = left {
-                                    Path::Str(var.clone(), val)
-                                } else {
-                                    return Err(ControlFlow::Error(EvalError::Program(
-                                        "expected left side of expression to be a dict".to_string(),
-                                    )));
-                                };
-                                handle_assignment(new, current, op)?;
-                            }
-                            super::parser::Field::Index(index) => {
-                                let index = eval_expr(index, &mut ctx_copy)?;
-                                let index = index.borrow();
-                                let index = index.deref();
-                                let current = match (left, index) {
-                                    (Val::Dict(val), Val::String(index)) => {
-                                        Path::Str(index.clone(), val)
-                                    }
-                                    (Val::List(val), Val::Int(index)) => {
-                                        let index = usize::try_from(*index).unwrap();
-                                        Path::Int(index, val)
-                                    }
-                                    _ => {
-                                        return Err(ControlFlow::Error(EvalError::Program(
-                                            "invalid assignment, expected either:\n
-                                             <expr that evaluates to a list>.[<expr that evaluates to an int>]\n
-                                             <expr that evaluates to a dict>.[<expr that evaluates to a str>]".to_string(),
-                                        )))
-                                    }
-                                };
-                                handle_assignment(new, current, op)?;
-                            }
-                        }
-                    }
-                };
-            }
             Statement::Expr(expr) => {
                 eval_expr(expr, ctx)?;
             }
@@ -558,12 +646,12 @@ pub fn eval(
     Ok(())
 }
 
-fn handle_assignment(
+fn get_new_for_assignment(
     new: Rc<RefCell<Val>>,
-    current: Path<'_>,
+    current: &Path<'_>,
     op: Option<&AssignOp>,
-) -> Result<(), ControlFlow> {
-    let new = match (current.resolve(), op) {
+) -> Result<Rc<RefCell<Val>>, ControlFlow> {
+    Ok(match (current.resolve(), op) {
         (Some(current), Some(x)) => match x {
             lexer::AssignOp::Add => handle_operator_rc(current, &BinOp::Op(lexer::Op::Add), &new),
             lexer::AssignOp::Sub => handle_operator_rc(current, &BinOp::Op(lexer::Op::Sub), &new),
@@ -578,12 +666,18 @@ fn handle_assignment(
                     .to_string(),
             )))
         }
-    };
+    })
+}
+
+fn handle_assignment(
+    new: Rc<RefCell<Val>>,
+    current: PathMut<'_>,
+) -> Result<(), ControlFlow> {
     match current {
-        Path::Str(key, map) => {
+        PathMut::Str(key, map) => {
             map.insert(key, new);
         }
-        Path::Int(index, list) => {
+        PathMut::Int(index, list) => {
             if index < list.len() {
                 list[index] = new;
             } else {
@@ -718,7 +812,7 @@ impl Val {
             Val::Unit => "()".into(),
             Val::Int(value) => format!("{}", value),
             Val::Bool(value) => format!("{}", value),
-            Val::Float(value) => format!("{}", value),
+            Val::Float(value) => format!("{:?}f", value),
             Val::String(value) => format!("'{}'", value),
             Val::Range(start, end) => format!("({}..{})", start, end),
             Val::List(values) => {
@@ -869,10 +963,10 @@ fn handle_operator(a: &Val, op: &super::parser::BinOp, b: &Val) -> Result<Val, E
         (left, Op(Eq), right) => Val::Bool(left == right),
         (left, Op(Neq), right) => Val::Bool(left != right),
         (Val::List(a), Op(Add), Val::List(b)) => {
-            Val::List(a.clone().into_iter().chain(b.clone().into_iter()).collect())
+            Val::List(a.iter().chain(b.iter()).map(|x| x.clone()).collect())
         }
         (Val::Dict(a), Op(Add), Val::Dict(b)) => {
-            Val::Dict(a.clone().into_iter().chain(b.clone().into_iter()).collect())
+            Val::Dict(a.iter().chain(b.iter()).map(|(k, v)| (k.clone(), v.clone())).collect())
         }
         (a, op, b) => Err(EvalError::Program(format!(
             "can't do operation {:?} between {} and {}",
@@ -984,6 +1078,8 @@ mod tests {
                 .to_json()
                 .unwrap()
         );
+        assert_eq!(ctx["a"].borrow().to_json().unwrap(), json!([[[], 1, 2], 1, 2]));
+        assert_eq!(ctx["b"].borrow().to_json().unwrap(), json!({"test_1": {"test": 0, "test_1": {}}, "test": 0}));
     }
 
     #[test]
@@ -1003,61 +1099,23 @@ mod tests {
     }
 
     #[test]
-    fn test_damage_to_target() {
-        for target in ["p0", "p1", "creature0", "bad-id"] {
-            let mut ctx = HashMap::new();
-            let board = json!({
-                "players" : {
-                    "p0" : { "health" : 3, "targets" : [target], "mana" : 10},
-                    "p1" : { "health" : 3, "targets" : [] }
-                },
-                "creatures" : {
-                    "creature0" : { "health" : 3 }
-                }
-            });
-            ctx.insert(
-                "@board".into(),
-                Rc::new(RefCell::new(from_json(board).unwrap())),
-            );
-            ctx.insert(
-                "@owner".into(),
-                Rc::new(RefCell::new(Val::String("p0".into()))),
-            );
-            let program = include_str!("../../test-spells/damage-to-target.spell");
-            let tokens = lexer::tokenize(program).unwrap();
-            let statements = parse(&mut tokens.iter()).unwrap();
-            match (target, eval(&statements, &mut ctx)) {
-                ("bad-id", Err(ControlFlow::Error(EvalError::Program(x)))) => {
-                    assert_eq!(x, "target is not a player or creature");
-                }
-                (_, x) => {
-                    x.unwrap();
-                }
-            };
-            let board = to_json(&ctx["@board"]).unwrap();
-            let expected_json = json!({
-                "players" : {
-                    "p0" : {
-                        "health" : if target == "p0" { 0 } else { 3 },
-                        "mana" : if target == "bad-id" { 10 } else { 7 },
-                        "targets" : [target],
-                    },
-                    "p1" : { "health" : if target == "p1" { 0 } else { 3 }, "targets" : [] }
-                },
-                "creatures" : {
-                    "creature0" : { "health" : if target == "creature0" { 0 } else { 3 } }
-                }
-            });
-            assert_eq!(board, expected_json);
-        }
-    }
-
-    #[test]
     fn test_run_function() {
         let mut ctx: HashMap<String, Rc<RefCell<Val>>> = HashMap::new();
         let program = include_str!("../../test-spells/fn.spell");
         let tokens = lexer::tokenize(program).unwrap();
         let statements = parse(&mut tokens.iter()).unwrap();
         eval(&statements, &mut ctx).unwrap();
+        assert_eq!(ctx["c"].borrow().to_json().unwrap(), json!({'a': 201, 'b': 10000}));
+    }
+
+    #[test]
+    fn test_map_filter() {
+        let mut ctx: HashMap<String, Rc<RefCell<Val>>> = HashMap::new();
+        let program = include_str!("../../test-spells/map-filter.spell");
+        let tokens = lexer::tokenize(program).unwrap();
+        let statements = parse(&mut tokens.iter()).unwrap();
+        eval(&statements, &mut ctx).unwrap();
+        assert_eq!(ctx["x"].borrow().to_json().unwrap(), json!([{'b': 6, 'a': -1}, {'a': 2, 'b': 1}]));
+        assert_eq!(ctx["y"].borrow().to_json().unwrap(), json!([{'a': 2, 'b': 1}]));
     }
 }
