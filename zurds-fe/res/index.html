@@ -1,15 +1,109 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <meta content="text/html;charset=utf-8" http-equiv="Content-Type" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chess Board</title>
+    <style>
+        .board {
+            display: grid;
+            grid-template-columns: repeat(8, 75px);
+            grid-template-rows: repeat(8, 75px);
+            width: 600px;
+            height: 600px;
+            border: 2px solid black;
+        }
+        .square {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 40px;
+            user-select: none;
+        }
+        .light { background-color: #ccb7ae; }
+        .dark { background-color: #706677; }
+    </style>
 </head>
 <body>
-    <script type="module">
-        import init from './zurds_fe.js';
-        async function run() {
-            await init();
+    <div class="board" id="chessboard"></div>
+    <script>
+        let pieceDisplay = {
+            'abo': '🐒',
+            'magician': '⚡',
+            'kamikaze': '💣',
+            'tower': '🏹',
+            'booglemaster': '🪜',
+            'king': '👑'
         }
-        run();
+
+        let history = []
+        let state = {
+            'turn' : 'white',
+            'pieces' : [
+                { 'name' : 'abo', 'color' : 'white', 'pos' : [0, 1] },
+                { 'name' : 'abo', 'color' : 'white', 'pos' : [1, 1] },
+                { 'name' : 'abo', 'color' : 'white', 'pos' : [2, 1] },
+                { 'name' : 'abo', 'color' : 'white', 'pos' : [3, 1] },
+                { 'name' : 'abo', 'color' : 'white', 'pos' : [4, 1] },
+                { 'name' : 'abo', 'color' : 'white', 'pos' : [5, 1] },
+                { 'name' : 'abo', 'color' : 'white', 'pos' : [6, 1] },
+                { 'name' : 'abo', 'color' : 'white', 'pos' : [7, 1] },
+
+                { 'name' : 'abo', 'color' : 'black', 'pos' : [0, 6] },
+                { 'name' : 'abo', 'color' : 'black', 'pos' : [1, 6] },
+                { 'name' : 'abo', 'color' : 'black', 'pos' : [2, 6] },
+                { 'name' : 'abo', 'color' : 'black', 'pos' : [3, 6] },
+                { 'name' : 'abo', 'color' : 'black', 'pos' : [4, 6] },
+                { 'name' : 'abo', 'color' : 'black', 'pos' : [5, 6] },
+                { 'name' : 'abo', 'color' : 'black', 'pos' : [6, 6] },
+                { 'name' : 'abo', 'color' : 'black', 'pos' : [7, 6] },
+
+                { 'name' : 'king', 'color' : 'white', 'pos' : [3, 0] },
+                { 'name' : 'booglemaster', 'color' : 'white', 'pos' : [4, 0] },
+                { 'name' : 'kamikaze', 'color' : 'white', 'pos' : [2, 0] },
+                { 'name' : 'kamikaze', 'color' : 'white', 'pos' : [5, 0] },
+                { 'name' : 'magician', 'color' : 'white', 'pos' : [1, 0] },
+                { 'name' : 'magician', 'color' : 'white', 'pos' : [6, 0] },
+                { 'name' : 'tower', 'color' : 'white', 'pos' : [0, 0] },
+                { 'name' : 'tower', 'color' : 'white', 'pos' : [7, 0] },
+
+                { 'name' : 'king', 'color' : 'black', 'pos' : [3, 7] },
+                { 'name' : 'booglemaster', 'color' : 'black', 'pos' : [4, 7] },
+                { 'name' : 'kamikaze', 'color' : 'black', 'pos' : [2, 7] },
+                { 'name' : 'kamikaze', 'color' : 'black', 'pos' : [5, 7] },
+                { 'name' : 'magician', 'color' : 'black', 'pos' : [1, 7] },
+                { 'name' : 'magician', 'color' : 'black', 'pos' : [6, 7] },
+                { 'name' : 'tower', 'color' : 'black', 'pos' : [0, 7] },
+                { 'name' : 'tower', 'color' : 'black', 'pos' : [7, 7] },
+            ]
+        }
+
+        const board = document.getElementById("chessboard")
+        function renderBoard(pieces) {
+            for (let y = 7; y >= 0; y--) {
+                for (let x = 0; x < 8; x++) {
+                    let square = document.createElement('div')
+                    square.className = `square ${(x + y) % 2 === 0 ? 'light' : 'dark'}`
+                    
+                    for (let piece of pieces) {
+                        if (piece.pos[0] === x && piece.pos[1] === y) {
+                            square.textContent = pieceDisplay[piece.name]
+                            square.style.color = 'transparent'
+                            square.style.textShadow = '0 0 0 ' + piece.color
+                            square.onclick(function() {
+                                console.log('hi')
+                            })
+                        }
+                    }
+                    board.appendChild(square)
+                }
+            }
+        }
+
+        renderBoard(state.pieces)
+
+
+
     </script>
 </body>
 </html>

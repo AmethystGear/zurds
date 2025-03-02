@@ -245,6 +245,18 @@ pub fn eval_expr<'a>(
                                 Err(e) => return Ok(e.clone()),
                             },
                             (Val::List(list), "len", []) => Val::Int(list.len() as i64),
+                            (Val::List(list), "contains", [x]) => {
+                                let mut contains = false;
+                                for val in list {
+                                    let val = val.borrow();
+                                    let val = val.deref();
+                                    if &val == x {
+                                        contains = true;
+                                        break;
+                                    }
+                                }
+                                Val::Bool(contains)
+                            },
                             (Val::List(list), "map", [Val::Function(args, program)]) => {
                                 if args.len() != 1 {
                                     return Err(ControlFlow::Error(EvalError::Program(
@@ -323,6 +335,12 @@ pub fn eval_expr<'a>(
                             (Val::Float(f), "round", []) => Val::Int(f.round() as i64),
                             (Val::Float(f), "ciel", []) => Val::Int(f.ceil() as i64),
                             (Val::Float(f), "floor", []) => Val::Int(f.floor() as i64),
+                            (Val::Float(a), "max", [Val::Float(b)]) => Val::Float(a.max(*b)),
+                            (Val::Int(a), "max", [Val::Int(b)]) => Val::Int(*a.max(b)),
+                            (Val::Float(a), "min", [Val::Float(b)]) => Val::Float(a.min(*b)),
+                            (Val::Int(a), "min", [Val::Int(b)]) => Val::Int(*a.min(b)),
+                            (Val::Float(f), "abs", []) => Val::Float(f.abs()),
+                            (Val::Int(i), "abs", []) => Val::Int(i.abs()),
                             (_, fn_name, args) => Err(EvalError::Program(format!(
                                 "cannot invoke method '{}' with args {}",
                                 fn_name,

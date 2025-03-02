@@ -1,0 +1,94 @@
+fn king_moves(piece_id, state):
+    king = state.pieces.[piece_id]
+    dirs = cardinals() + diagonals()
+    locs = dirs.map(fn dir: add_loc(king.loc, dir))
+    return displacement_moves(piece_id, state, locs, true)
+
+fn mercenary_moves(piece_id, state):
+    merc = state.pieces.[piece_id]
+    dirs = cardinals() + diagonals()
+    locs = dirs.map(fn dir: add_loc(merc.loc, dir))
+    moves = displacement_moves(piece_id, state, locs, true)
+
+    legal_moves = []
+    for move in moves:
+        vertical_displacement = move.displacement.[1]
+        is_moving_forward = (merc.color == 'white' and vertical_displacement == 1) or (merc.color == 'black' and vertical_displacement == -1)
+        if is_moving_forward or move.name == 'capture':
+            legal_moves.push(move)
+
+    return legal_moves
+
+# given a boardstate, count the number of opponent pieces that could be captured by mercenaries
+fn get_mercenary_capturable_opponent_pieces(state):
+    my_mercs = state.pieces.filter(fn piece: piece.type == 'mercenary' and piece.color == state.turn)
+    opponent_pieces = state.pieces.filter(fn piece: piece.color != state.turn)
+
+    num_capturable_opponent_pieces = 0
+    for merc in my_mercs:
+        for opponent_piece in opponent_pieces:
+            if chess_dist(merc.loc, opponent_piece.loc) == 1:
+                num_capturable_opponent_pieces += 1
+
+    return num_capturable_opponent_pieces
+
+
+# if there exists a move where the mercenary could capture an opponent piece,
+# curse every move where such a piece is not captured.
+fn mercenary_rule(state, moves):
+    starting_mercenary_captureable_opponent_pieces = get_mercenary_capturable_opponent_pieces(state)
+    if starting_mercenary_captureable_opponent_pieces == 0:
+        return 
+
+    for move in moves:
+        if get_mercenary_capturable_opponent_pieces(move) >= starting_mercenary_captureable_opponent_pieces:
+            move.cursed = true
+
+
+fn booglemaster_moves(piece_id, state):
+    booglemaster = state.pieces.[piece_id]
+    locs = knight_dirs().map(fn dir: add_loc(booglemaster.loc, dir))
+    knight_moves = displacement_moves(piece_id, state, locs, true)
+
+    queen_dirs = cardinals() + diagonals()
+    stop_condition = fn loc, state: get_piece(loc, state.pieces).is_some()
+    locs = get_all_possible_locations_in_directions(piece_id, state, queen_dirs, stop_condition, true)
+    queen_moves = displacement_moves(piece_id, state, locs, true)
+    
+    return (knight_moves + queen_moves).filter(fn move: move.name == 'capture')
+
+
+fn magician_moves(piece_id, state):
+    magician = state.pieces.[piece_id]
+    dirs = cardinals() + diagonals()
+    locs = dirs.map(fn dir: add_loc(magician.loc, dir))
+    one_square_moves = displacement_moves(piece_id, state, locs, true)
+
+    locs = []
+    for piece in state.pieces:
+        if piece.color == magician.color:
+            one_square_away = dirs.map(fn dir: add_loc(piece.loc, dir))
+            for loc in one_square_away:
+                if not(locs.contains(loc)):
+                    locs.push(loc)
+
+    teleport_moves = displacement_moves(piece_id, state, locs, false)
+    return teleport_moves + one_square_moves
+
+fn tower_moves(piece_id, state):
+    tower = state.pieces.[piece_id]
+    locs = knight_dirs().map(fn dir: add_loc(tower.loc, dir))
+
+    capture_moves = []
+    for loc in locs:
+        move = state.copy()
+        capture = get_piece(loc, move.pieces).map(fn piece: piece.captured = true).is_some()
+        if capture:
+            capture_moves.push(move)
+
+    rook_dirs = cardinals()
+    stop_condition = fn loc, state: get_piece(loc, state.pieces).is_some()
+    locs = get_all_possible_locations_in_directions(piece_id, state, rook_dirs, stop_condition, false)
+    rook_moves = displacement_moves(piece_id, state, locs, false)
+    return rook_moves + capture_moves
+
