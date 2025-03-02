@@ -1,6 +1,9 @@
 fn add_loc(a, b):
     return [a.[0] + b.[0], a.[1] + b.[1]]
 
+fn sub_loc(a, b):
+    return [a.[0] - b.[0], a.[1] - b.[1]]
+
 fn chess_dist(a, b):
     return (a.[0] - b.[0]).abs().max((a.[1] - b.[1]).abs())
 
@@ -19,8 +22,14 @@ fn diagonals():
 fn knight_dirs():
     return [[2, -1], [2, 1], [-2, -1], [-2, 1], [1, 2], [-1, 2], [1, -2], [-1, -2]]
 
+fn create_move(state, name, loc):
+    return {'state' : state, 'name' : name, 'loc' : loc, 'cursed' : false}
+
+fn get_displacement(piece, move):
+    return sub_loc(move.state.pieces.[piece.id].loc, piece.loc)
+
 # given a piece id and all the locations we are allowed to move the piece
-# to, this generates all the possible moves. If a piece would be captured,
+# to, this generates all the possible moves. If a piece would be captured via displacement,
 # the move is named 'capture' otherwise, it is named 'move'. If allow_captures is false,
 # any moves that would capture are skipped.
 fn displacement_moves(piece_id, state, locs, allow_captures):
