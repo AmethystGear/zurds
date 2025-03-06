@@ -2,7 +2,17 @@ fn king_moves(piece_id, state):
     king = state.pieces.[piece_id]
     dirs = cardinals() + diagonals()
     locs = dirs.map(fn dir: add_loc(king.loc, dir))
-    return displacement_moves(piece_id, state, locs, true)
+
+    turn_moves = []
+    for loc in locs:
+        move = state.copy()
+        turn_piece = fn piece: piece.color = king.color
+        is_opponent_piece = fn piece: piece.color != king.color
+        opponent_piece_exists = get_piece(loc, move).filter(is_opponent_piece).map(turn_piece).is_some()
+        if opponent_piece_exists:
+            turn_moves.push(move)
+
+    return turn_moves + displacement_moves(piece_id, state, locs, true)
 
 fn mercenary_moves(piece_id, state):
     merc = state.pieces.[piece_id]
@@ -12,16 +22,16 @@ fn mercenary_moves(piece_id, state):
 
     legal_moves = []
     for move in moves:
-        vertical_displacement = get_displacement(merc, move).[1]
-        is_moving_backward = (merc.color == 'white' and vertical_displacement == -1) or (merc.color == 'black' and vertical_displacement == 1)
+        vertical = get_displacement(merc, move).[1]
+        is_moving_backward = (merc.color == 'white' and vertical == -1) or (merc.color == 'black' and vertical == 1)
         if not(is_moving_backward) or move.name == 'capture':
             legal_moves.push(move)
 
     return legal_moves
 
 # given a boardstate, count the number of opponent pieces that could be captured by mercenaries
-fn get_mercenary_capturable_opponent_pieces(state):
-    my_mercs = state.pieces.filter(fn piece: piece.type == 'mercenary' and piece.color == state.turn)
+fn get_mercenary_capturable_opponent_pieces_count(state):
+    my_mercs = state.pieces.filter(fn piece: piece.name == 'mercenary' and piece.color == state.turn)
     opponent_pieces = state.pieces.filter(fn piece: piece.color != state.turn)
 
     num_capturable_opponent_pieces = 0
@@ -31,21 +41,21 @@ fn get_mercenary_capturable_opponent_pieces(state):
                 num_capturable_opponent_pieces += 1
 
     return num_capturable_opponent_pieces
-
+  
 # if there exists a move where the mercenary could capture an opponent piece,
 # curse every move where such a piece is not captured.
 fn mercenary_rule(state, moves):
-    starting_mercenary_captureable_opponent_pieces = get_mercenary_capturable_opponent_pieces(state)
+    starting_mercenary_captureable_opponent_pieces = get_mercenary_capturable_opponent_pieces_count(state)
     if starting_mercenary_captureable_opponent_pieces == 0:
         return 
 
     for move in moves:
-        if get_mercenary_capturable_opponent_pieces(move) >= starting_mercenary_captureable_opponent_pieces:
+        if get_mercenary_capturable_opponent_pieces_count(move.state) >= starting_mercenary_captureable_opponent_pieces:
             move.cursed = true
 
-fn booglemaster_moves(piece_id, state):
-    booglemaster = state.pieces.[piece_id]
-    locs = knight_dirs().map(fn dir: add_loc(booglemaster.loc, dir))
+fn vizir_moves(piece_id, state):
+    vizir = state.pieces.[piece_id]
+    locs = knight_dirs().map(fn dir: add_loc(vizir.loc, dir))
     knight_moves = displacement_moves(piece_id, state, locs, true)
 
     queen_dirs = cardinals() + diagonals()
@@ -66,15 +76,15 @@ fn magician_moves(piece_id, state):
         if piece.color == magician.color:
             one_square_away = dirs.map(fn dir: add_loc(piece.loc, dir))
             for loc in one_square_away:
-                if not(locs.contains(loc)):
+                if not locs.contains(loc):
                     locs.push(loc)
 
     teleport_moves = displacement_moves(piece_id, state, locs, false)
     return teleport_moves + one_square_moves
 
-fn tower_moves(piece_id, state):
-    tower = state.pieces.[piece_id]
-    locs = knight_dirs().map(fn dir: add_loc(tower.loc, dir))
+fn chariot_moves(piece_id, state):
+    chariot = state.pieces.[piece_id]
+    locs = knight_dirs().map(fn dir: add_loc(chariot.loc, dir))
 
     capture_moves = []
     for loc in locs:
@@ -88,16 +98,15 @@ fn tower_moves(piece_id, state):
     rook_moves = displacement_moves(piece_id, state, locs, false)
     return rook_moves + capture_moves
 
-fn kamikaze_moves(piece_id, state):
+fn martyr_moves(piece_id, state):
     stop_condition = fn loc, state: get_piece(loc, state.pieces).is_some()
     locs = get_all_possible_locations_in_directions(piece_id, state, diagonals(), stop_condition, true)
     moves = displacement_moves(piece_id, state, locs, true)
     for move in moves:
         if move.name == 'capture':
-            kamikaze = move.state.pieces.[piece_id]
-            kamikaze.captured = true
-            for loc in diagonals().map(fn dir: kamikaze.loc + dir):
+            martyr = move.state.pieces.[piece_id]
+            martyr.captured = true
+            for loc in diagonals().map(fn dir: martyr.loc + dir):
                 get_piece(loc, move.state).filter(fn piece: piece.name != 'king').map(fn piece: piece.captured = true)
 
     return moves
-

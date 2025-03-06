@@ -86,6 +86,7 @@ pub enum Kw {
     Loop,
     And,
     Or,
+    Not,
     In,
     Fn,
     Return
@@ -101,6 +102,7 @@ const KW: Map<&str, Kw> = phf_map!(
     "loop" => Kw::Loop,
     "and" => Kw::And,
     "or" => Kw::Or,
+    "not" => Kw::Not,
     "in" => Kw::In,
     "fn" => Kw::Fn,
     "return" => Kw::Return

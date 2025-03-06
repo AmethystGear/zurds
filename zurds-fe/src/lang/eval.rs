@@ -1,5 +1,5 @@
 use std::{
-    cell::RefCell,
+    cell::{Ref, RefCell},
     collections::HashMap,
     fmt::Debug,
     ops::{Deref, DerefMut},
@@ -35,7 +35,7 @@ pub fn eval_expr<'a>(
                 Val::List(args.clone())
             )));
 
-            let builtins = ["print", "exit", "err", "not"];
+            let builtins = ["print", "exit", "err"];
             if builtins.contains(&&fn_name[..]) {
                 let args: Vec<_> = args.iter().map(|x| x.borrow().clone()).collect();
                 Ok(Rc::new(RefCell::new(match (&fn_name[..], &args[..]) {
@@ -69,7 +69,6 @@ pub fn eval_expr<'a>(
                     ("err", [Val::String(s)]) => {
                         Err(ControlFlow::Error(EvalError::Custom(s.to_string())))
                     }
-                    ("not", [Val::Bool(b)]) => Ok(Val::Bool(!b)),
                     _ => Err(cannot_invoke),
                 }?)))
             } else {
@@ -193,6 +192,15 @@ pub fn eval_expr<'a>(
                     let args: Vec<_> = args.iter().map(|x| x.deref()).collect();
                     Ok(Rc::new(RefCell::new(
                         match (left_val, &ident[..], &args[..]) {
+                            (val, "copy", []) => {
+                                if let Ok(Ok(val)) = val.to_json().map(|json| from_json(json)) {
+                                    return Ok(Rc::new(RefCell::new(val)));
+                                } else {
+                                    return Err(ControlFlow::Error(EvalError::Program(
+                                        "Could not copy object. It may have looping references or objects that cannot be represented in JSON.".into(),
+                                    )));
+                                }
+                            },
                             (Val::Dict(dict), "contains_key", [Val::String(s)]) => {
                                 Val::Bool(dict.contains_key(s))
                             }
@@ -506,6 +514,17 @@ pub fn eval_expr<'a>(
             };
             Ok(Rc::new(RefCell::new(Val::Unit)))
         },
+        Expr::Not(expr) => {
+            let val = eval_expr(expr, ctx)?;
+            let val = val.borrow();
+            let val = val.deref();
+            match val {
+                Val::Bool(b) => {
+                    Ok(Rc::new(RefCell::new(Val::Bool(!b))))
+                },
+                x => return Err(ControlFlow::Error(EvalError::Program(format!("expected bool, found {:?}", x))))
+            }
+        }
     }
 }
 

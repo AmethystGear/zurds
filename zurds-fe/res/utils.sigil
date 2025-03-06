@@ -37,14 +37,14 @@ fn displacement_moves(piece_id, state, locs, allow_captures):
     for loc in locs:
         move = state.copy()
         piece = move.pieces.[piece_id]
-        if not(is_valid_loc(loc)):
+        if not is_valid_loc(loc):
             continue
 
         capture = get_piece(loc, move.pieces).map(fn piece: piece.captured = true).is_some()
         piece.loc = loc
 
         if capture:
-            if not(allow_captures):
+            if not allow_captures:
                 continue
 
             name = 'capture'

@@ -1,8 +1,11 @@
 use super::{
     err::{LangErr, Loc},
-    lexer::{self, AssignOp, Op, Token},
+    lexer::{self, AssignOp, Token},
 };
 use std::slice::Iter;
+
+
+
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum BinOp {
@@ -19,6 +22,7 @@ pub enum Expr {
     List(Vec<Expr>),
     Dict(Vec<(Expr, Expr)>),
     BinOp(Box<Expr>, BinOp, Box<Expr>),
+    Not(Box<Expr>),
     Var(lexer::Ident),
     Lambda(Vec<lexer::Ident>, Box<Expr>),
     Assign(Box<Assign>, Option<AssignOp>, Box<Expr>),
@@ -49,22 +53,23 @@ pub enum Statement {
     Function(lexer::Ident, Vec<lexer::Ident>, Vec<Statement>),
 }
 
-const PRECEDENCE: [BinOp; 15] = [
-    BinOp::Op(lexer::Op::Access),
-    BinOp::Op(lexer::Op::Range),
-    BinOp::Op(lexer::Op::Mul),
-    BinOp::Op(lexer::Op::Div),
-    BinOp::Op(lexer::Op::Mod),
-    BinOp::Op(lexer::Op::Add),
-    BinOp::Op(lexer::Op::Sub),
-    BinOp::Op(lexer::Op::Eq),
-    BinOp::Op(lexer::Op::Neq),
-    BinOp::Op(lexer::Op::LThan),
-    BinOp::Op(lexer::Op::GThan),
-    BinOp::Op(lexer::Op::LThanEq),
-    BinOp::Op(lexer::Op::GThanEq),
-    BinOp::And,
-    BinOp::Or,
+const PRECEDENCE: [Operator; 16] = [
+    Operator::BinOp(BinOp::Op(lexer::Op::Access)),
+    Operator::Not,
+    Operator::BinOp(BinOp::Op(lexer::Op::Range)),
+    Operator::BinOp(BinOp::Op(lexer::Op::Mul)),
+    Operator::BinOp(BinOp::Op(lexer::Op::Div)),
+    Operator::BinOp(BinOp::Op(lexer::Op::Mod)),
+    Operator::BinOp(BinOp::Op(lexer::Op::Add)),
+    Operator::BinOp(BinOp::Op(lexer::Op::Sub)),
+    Operator::BinOp(BinOp::Op(lexer::Op::Eq)),
+    Operator::BinOp(BinOp::Op(lexer::Op::Neq)),
+    Operator::BinOp(BinOp::Op(lexer::Op::LThan)),
+    Operator::BinOp(BinOp::Op(lexer::Op::GThan)),
+    Operator::BinOp(BinOp::Op(lexer::Op::LThanEq)),
+    Operator::BinOp(BinOp::Op(lexer::Op::GThanEq)),
+    Operator::BinOp(BinOp::And),
+    Operator::BinOp(BinOp::Or),
 ];
 
 macro_rules! expect {
@@ -249,18 +254,27 @@ fn parse_primary(tokens: &mut Iter<'_, (lexer::Token, Loc)>) -> Result<Expr, Lan
     }
 }
 
-enum ExprOrBinOp {
-    Expr(Expr),
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Operator {
     BinOp(BinOp),
+    Not
+}
+enum PrimaryOperator {
+    Expr(Expr),
+    Op(Operator)
 }
 
 fn parse_primary_operator_list<'a>(
     tokens: &mut Iter<'_, (lexer::Token, Loc)>,
-) -> Result<Vec<ExprOrBinOp>, LangErr> {
+) -> Result<Vec<PrimaryOperator>, LangErr> {
     let mut mix = vec![];
     loop {
+        if let Some(lexer::Token::Kw(lexer::Kw::Not)) = tokens.clone().next().map(|(x, _)| x) {
+            mix.push(PrimaryOperator::Op(Operator::Not));
+            tokens.next();
+        }
         let primary = parse_primary(tokens)?;
-        mix.push(ExprOrBinOp::Expr(primary));
+        mix.push(PrimaryOperator::Expr(primary));
         let binop = match tokens.clone().next().map(|(x, _)| x) {
             Some(x) => match x {
                 lexer::Token::Op(op) => Some(BinOp::Op(op.clone())),
@@ -271,7 +285,7 @@ fn parse_primary_operator_list<'a>(
             None => None,
         };
         if let Some(binop) = binop {
-            mix.push(ExprOrBinOp::BinOp(binop));
+            mix.push(PrimaryOperator::Op(Operator::BinOp(binop)));
             tokens.next();
         } else {
             break;
@@ -280,21 +294,21 @@ fn parse_primary_operator_list<'a>(
     Ok(mix)
 }
 
-fn parse_expr_from_primary_operator_list(mut mix: Vec<ExprOrBinOp>) -> Result<Expr, LangErr> {
+fn parse_expr_from_primary_operator_list(mut mix: Vec<PrimaryOperator>) -> Result<Expr, LangErr> {
     loop {
         if mix.len() == 1 {
-            if let ExprOrBinOp::Expr(expr) = mix.pop().unwrap() {
+            if let PrimaryOperator::Expr(expr) = mix.pop().unwrap() {
                 return Ok(expr);
             } else {
-                panic!("BUG! first element in mix should always be an expression");
+                panic!("BUG! if mix is a single element, it should always just be an expression.");
             }
         }
         let (i, _) = mix
             .iter()
             .enumerate()
             .filter_map(|(i, x)| match x {
-                ExprOrBinOp::Expr(_) => None,
-                ExprOrBinOp::BinOp(bin_op) => Some((i, bin_op)),
+                PrimaryOperator::Expr(_) => None,
+                PrimaryOperator::Op(op) => Some((i, op)),
             })
             .map(|(i, x)| {
                 let mut j = 0;
@@ -308,35 +322,37 @@ fn parse_expr_from_primary_operator_list(mut mix: Vec<ExprOrBinOp>) -> Result<Ex
             })
             .min_by_key(|(_, x)| *x)
             .unwrap();
-        if i % 2 == 0 {
-            panic!("BUG! binops should always be at odd indices");
-        }
 
         let mut new_mix = vec![];
         let mut collapse = vec![];
         for (j, expr_or_binop) in mix.into_iter().enumerate() {
-            if j == i - 1 || j == i || j == i + 1 {
+            if (i != 0 && j == i - 1) || j == i || j == i + 1 {
+                if j == i {
+                    if let PrimaryOperator::Op(Operator::Not) = &expr_or_binop {
+                        collapse = vec![];
+                    }
+                }
                 collapse.push(expr_or_binop);
                 if j == i + 1 {
                     let mut c = collapse.into_iter();
                     match (c.next(), c.next(), c.next()) {
                         (
-                            Some(ExprOrBinOp::Expr(lhs)),
-                            Some(ExprOrBinOp::BinOp(bin_op)),
-                            Some(ExprOrBinOp::Expr(rhs)),
+                            Some(PrimaryOperator::Expr(lhs)),
+                            Some(PrimaryOperator::Op(Operator::BinOp(bin_op))),
+                            Some(PrimaryOperator::Expr(rhs)),
                         ) => {
-                            new_mix.push(ExprOrBinOp::Expr(Expr::BinOp(
+                            new_mix.push(PrimaryOperator::Expr(Expr::BinOp(
                                 Box::new(lhs),
                                 bin_op,
                                 Box::new(rhs),
                             )));
                         }
-                        (Some(ExprOrBinOp::Expr(_)), Some(ExprOrBinOp::BinOp(_)), None) => {
-                            panic!("bug")
+                        (Some(PrimaryOperator::Op(Operator::Not)), Some(PrimaryOperator::Expr(expr)), None) => {
+                            new_mix.push(PrimaryOperator::Expr(Expr::Not(Box::new(expr))));
                         }
-                        _ => panic!("BUG! "),
+                        _ => panic!("BUG!"),
                     }
-                    collapse = vec![];
+                    collapse = vec![]
                 }
                 continue;
             }
@@ -589,7 +605,7 @@ fn parse_statement(
                         let (body, n) = _parse(indentation + 1, tokens)?;
                         (Statement::Function(name, args, body), n - 1)
                     }
-                    lexer::Kw::And | lexer::Kw::Or  => (Statement::Expr(parse_expr(&mut tokens)?), 0)
+                    lexer::Kw::And | lexer::Kw::Or | lexer::Kw::Not => (Statement::Expr(parse_expr(&mut tokens)?), 0)
                 },
                 _ => {
                     (Statement::Expr(parse_chain_or_assignment_or_expr(&mut tokens)?), 0)
@@ -615,7 +631,7 @@ mod tests {
 
     #[test]
     fn test_parse_expr() {
-        let tokens = lexer::tokenize("(is_valid().not() and opponent != \"harry\" + 5)").unwrap();
+        let tokens = lexer::tokenize("(not x.y.z and opponent != \"harry\" + 5)").unwrap();
         println!("{:?}", tokens);
         let parsed = parse_expr(&mut tokens.iter()).unwrap();
         println!("{:?}", parsed);
