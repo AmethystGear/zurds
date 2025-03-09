@@ -1,265 +1,36 @@
-{'loc': [
-        4,
-        0
-    ], 'cursed': false, 'state': {'turn': 'white', 'pieces': {'mercenary_2': {'loc': [
-                    2,
-                    1
-                ], 'id': 'mercenary_2', 'captured': false, 'color': 'white', 'name': 'mercenary'
-            }, 'mercenary_15': {'color': 'black', 'id': 'mercenary_15', 'loc': [
-                    7,
-                    6
-                ], 'name': 'mercenary', 'captured': false
-            }, 'chariot_30': {'loc': [
-                    0,
-                    7
-                ], 'id': 'chariot_30', 'color': 'black', 'name': 'chariot', 'captured': false
-            }, 'king_16': {'captured': false, 'name': 'king', 'loc': [
-                    4,
-                    0
-                ], 'id': 'king_16', 'color': 'white'
-            }, 'magician_21': {'color': 'white', 'name': 'magician', 'loc': [
-                    6,
-                    0
-                ], 'id': 'magician_21', 'captured': false
-            }, 'vizir_17': {'color': 'white', 'name': 'vizir', 'loc': [
-                    4,
-                    0
-                ], 'captured': false, 'id': 'vizir_17'
-            }, 'martyr_19': {'captured': false, 'id': 'martyr_19', 'color': 'white', 'name': 'martyr', 'loc': [
-                    5,
-                    0
-                ]
-            }, 'magician_20': {'color': 'white', 'captured': false, 'loc': [
-                    1,
-                    0
-                ], 'name': 'magician', 'id': 'magician_20'
-            }, 'mercenary_0': {'color': 'white', 'captured': false, 'loc': [
-                    0,
-                    1
-                ], 'id': 'mercenary_0', 'name': 'mercenary'
-            }, 'mercenary_7': {'id': 'mercenary_7', 'loc': [
-                    7,
-                    1
-                ], 'color': 'white', 'name': 'mercenary', 'captured': false
-            }, 'mercenary_12': {'id': 'mercenary_12', 'loc': [
-                    4,
-                    6
-                ], 'captured': false, 'color': 'black', 'name': 'mercenary'
-            }, 'king_24': {'loc': [
-                    3,
-                    7
-                ], 'name': 'king', 'captured': false, 'color': 'black', 'id': 'king_24'
-            }, 'chariot_22': {'name': 'chariot', 'captured': false, 'color': 'white', 'id': 'chariot_22', 'loc': [
-                    0,
-                    0
-                ]
-            }, 'martyr_18': {'color': 'white', 'id': 'martyr_18', 'loc': [
-                    2,
-                    0
-                ], 'name': 'martyr', 'captured': false
-            }, 'mercenary_11': {'color': 'black', 'captured': false, 'loc': [
-                    3,
-                    6
-                ], 'id': 'mercenary_11', 'name': 'mercenary'
-            }, 'mercenary_13': {'loc': [
-                    5,
-                    6
-                ], 'captured': false, 'color': 'black', 'id': 'mercenary_13', 'name': 'mercenary'
-            }, 'mercenary_4': {'name': 'mercenary', 'loc': [
-                    4,
-                    1
-                ], 'color': 'white', 'id': 'mercenary_4', 'captured': false
-            }, 'vizir_25': {'name': 'vizir', 'captured': false, 'color': 'black', 'id': 'vizir_25', 'loc': [
-                    4,
-                    7
-                ]
-            }, 'chariot_23': {'captured': false, 'loc': [
-                    7,
-                    0
-                ], 'color': 'white', 'id': 'chariot_23', 'name': 'chariot'
-            }, 'martyr_27': {'name': 'martyr', 'color': 'black', 'id': 'martyr_27', 'captured': false, 'loc': [
-                    5,
-                    7
-                ]
-            }, 'mercenary_9': {'name': 'mercenary', 'color': 'black', 'id': 'mercenary_9', 'loc': [
-                    1,
-                    6
-                ], 'captured': false
-            }, 'mercenary_14': {'captured': false, 'id': 'mercenary_14', 'color': 'black', 'loc': [
-                    6,
-                    6
-                ], 'name': 'mercenary'
-            }, 'mercenary_8': {'name': 'mercenary', 'captured': false, 'color': 'black', 'id': 'mercenary_8', 'loc': [
-                    0,
-                    6
-                ]
-            }, 'magician_29': {'color': 'black', 'id': 'magician_29', 'name': 'magician', 'captured': false, 'loc': [
-                    6,
-                    7
-                ]
-            }, 'mercenary_1': {'id': 'mercenary_1', 'captured': false, 'color': 'white', 'loc': [
-                    1,
-                    1
-                ], 'name': 'mercenary'
-            }, 'chariot_31': {'captured': false, 'name': 'chariot', 'id': 'chariot_31', 'loc': [
-                    7,
-                    7
-                ], 'color': 'black'
-            }, 'magician_28': {'id': 'magician_28', 'color': 'black', 'name': 'magician', 'captured': false, 'loc': [
-                    1,
-                    7
-                ]
-            }, 'mercenary_3': {'id': 'mercenary_3', 'loc': [
-                    3,
-                    1
-                ], 'captured': false, 'color': 'white', 'name': 'mercenary'
-            }, 'mercenary_6': {'loc': [
-                    6,
-                    1
-                ], 'name': 'mercenary', 'id': 'mercenary_6', 'captured': false, 'color': 'white'
-            }, 'martyr_26': {'loc': [
-                    2,
-                    7
-                ], 'name': 'martyr', 'id': 'martyr_26', 'captured': false, 'color': 'black'
-            }, 'mercenary_10': {'captured': false, 'name': 'mercenary', 'loc': [
-                    2,
-                    6
-                ], 'id': 'mercenary_10', 'color': 'black'
-            }, 'mercenary_5': {'color': 'white', 'loc': [
-                    5,
-                    1
-                ], 'name': 'mercenary', 'captured': false, 'id': 'mercenary_5'
-            }
-        }
-    }, 'name': 'move', 'piece_id': 'king_16'
-}, on {'turn': 'white', 'pieces': {'mercenary_2': {'loc': [
-                2,
-                1
-            ], 'id': 'mercenary_2', 'captured': false, 'color': 'white', 'name': 'mercenary'
-        }, 'mercenary_15': {'color': 'black', 'id': 'mercenary_15', 'loc': [
-                7,
-                6
-            ], 'name': 'mercenary', 'captured': false
-        }, 'chariot_30': {'loc': [
-                0,
-                7
-            ], 'id': 'chariot_30', 'color': 'black', 'name': 'chariot', 'captured': false
-        }, 'king_16': {'captured': false, 'name': 'king', 'loc': [
-                4,
-                0
-            ], 'id': 'king_16', 'color': 'white'
-        }, 'magician_21': {'color': 'white', 'name': 'magician', 'loc': [
-                6,
-                0
-            ], 'id': 'magician_21', 'captured': false
-        }, 'vizir_17': {'color': 'white', 'name': 'vizir', 'loc': [
-                4,
-                0
-            ], 'captured': false, 'id': 'vizir_17'
-        }, 'martyr_19': {'captured': false, 'id': 'martyr_19', 'color': 'white', 'name': 'martyr', 'loc': [
-                5,
-                0
-            ]
-        }, 'magician_20': {'color': 'white', 'captured': false, 'loc': [
-                1,
-                0
-            ], 'name': 'magician', 'id': 'magician_20'
-        }, 'mercenary_0': {'color': 'white', 'captured': false, 'loc': [
-                0,
-                1
-            ], 'id': 'mercenary_0', 'name': 'mercenary'
-        }, 'mercenary_7': {'id': 'mercenary_7', 'loc': [
-                7,
-                1
-            ], 'color': 'white', 'name': 'mercenary', 'captured': false
-        }, 'mercenary_12': {'id': 'mercenary_12', 'loc': [
-                4,
-                6
-            ], 'captured': false, 'color': 'black', 'name': 'mercenary'
-        }, 'king_24': {'loc': [
-                3,
-                7
-            ], 'name': 'king', 'captured': false, 'color': 'black', 'id': 'king_24'
-        }, 'chariot_22': {'name': 'chariot', 'captured': false, 'color': 'white', 'id': 'chariot_22', 'loc': [
-                0,
-                0
-            ]
-        }, 'martyr_18': {'color': 'white', 'id': 'martyr_18', 'loc': [
-                2,
-                0
-            ], 'name': 'martyr', 'captured': false
-        }, 'mercenary_11': {'color': 'black', 'captured': false, 'loc': [
-                3,
-                6
-            ], 'id': 'mercenary_11', 'name': 'mercenary'
-        }, 'mercenary_13': {'loc': [
-                5,
-                6
-            ], 'captured': false, 'color': 'black', 'id': 'mercenary_13', 'name': 'mercenary'
-        }, 'mercenary_4': {'name': 'mercenary', 'loc': [
-                4,
-                1
-            ], 'color': 'white', 'id': 'mercenary_4', 'captured': false
-        }, 'vizir_25': {'name': 'vizir', 'captured': false, 'color': 'black', 'id': 'vizir_25', 'loc': [
-                4,
-                7
-            ]
-        }, 'chariot_23': {'captured': false, 'loc': [
-                7,
-                0
-            ], 'color': 'white', 'id': 'chariot_23', 'name': 'chariot'
-        }, 'martyr_27': {'name': 'martyr', 'color': 'black', 'id': 'martyr_27', 'captured': false, 'loc': [
-                5,
-                7
-            ]
-        }, 'mercenary_9': {'name': 'mercenary', 'color': 'black', 'id': 'mercenary_9', 'loc': [
-                1,
-                6
-            ], 'captured': false
-        }, 'mercenary_14': {'captured': false, 'id': 'mercenary_14', 'color': 'black', 'loc': [
-                6,
-                6
-            ], 'name': 'mercenary'
-        }, 'mercenary_8': {'name': 'mercenary', 'captured': false, 'color': 'black', 'id': 'mercenary_8', 'loc': [
-                0,
-                6
-            ]
-        }, 'magician_29': {'color': 'black', 'id': 'magician_29', 'name': 'magician', 'captured': false, 'loc': [
-                6,
-                7
-            ]
-        }, 'mercenary_1': {'id': 'mercenary_1', 'captured': false, 'color': 'white', 'loc': [
-                1,
-                1
-            ], 'name': 'mercenary'
-        }, 'chariot_31': {'captured': false, 'name': 'chariot', 'id': 'chariot_31', 'loc': [
-                7,
-                7
-            ], 'color': 'black'
-        }, 'magician_28': {'id': 'magician_28', 'color': 'black', 'name': 'magician', 'captured': false, 'loc': [
-                1,
-                7
-            ]
-        }, 'mercenary_3': {'id': 'mercenary_3', 'loc': [
-                3,
-                1
-            ], 'captured': false, 'color': 'white', 'name': 'mercenary'
-        }, 'mercenary_6': {'loc': [
-                6,
-                1
-            ], 'name': 'mercenary', 'id': 'mercenary_6', 'captured': false, 'color': 'white'
-        }, 'martyr_26': {'loc': [
-                2,
-                7
-            ], 'name': 'martyr', 'id': 'martyr_26', 'captured': false, 'color': 'black'
-        }, 'mercenary_10': {'captured': false, 'name': 'mercenary', 'loc': [
-                2,
-                6
-            ], 'id': 'mercenary_10', 'color': 'black'
-        }, 'mercenary_5': {'color': 'white', 'loc': [
-                5,
-                1
-            ], 'name': 'mercenary', 'captured': false, 'id': 'mercenary_5'
-        }
-    }
-}"))
+                    { "captured" : false, "name" : "mercenary", "color" : "white", "loc" : [0, 1] },
+                    { "captured" : false, "name" : "mercenary", "color" : "white", "loc" : [1, 1] },
+                    { "captured" : false, "name" : "mercenary", "color" : "white", "loc" : [2, 1] },
+                    { "captured" : false, "name" : "mercenary", "color" : "white", "loc" : [3, 1] },
+                    { "captured" : false, "name" : "mercenary", "color" : "white", "loc" : [4, 1] },
+                    { "captured" : false, "name" : "mercenary", "color" : "white", "loc" : [5, 1] },
+                    { "captured" : false, "name" : "mercenary", "color" : "white", "loc" : [6, 1] },
+                    { "captured" : false, "name" : "mercenary", "color" : "white", "loc" : [7, 1] },
+    
+                    { "captured" : false, "name" : "mercenary", "color" : "black", "loc" : [0, 6] },
+                    { "captured" : false, "name" : "mercenary", "color" : "black", "loc" : [1, 6] },
+                    { "captured" : false, "name" : "mercenary", "color" : "black", "loc" : [2, 6] },
+                    { "captured" : false, "name" : "mercenary", "color" : "black", "loc" : [3, 6] },
+                    { "captured" : false, "name" : "mercenary", "color" : "black", "loc" : [4, 6] },
+                    { "captured" : false, "name" : "mercenary", "color" : "black", "loc" : [5, 6] },
+                    { "captured" : false, "name" : "mercenary", "color" : "black", "loc" : [6, 6] },
+                    { "captured" : false, "name" : "mercenary", "color" : "black", "loc" : [7, 6] },
+                    
+                    { "captured" : false, "name" : "king", "color" : "white", "loc" : [3, 0] },
+    
+                    
+                    { "captured" : false, "name" : "vizir", "color" : "white", "loc" : [4, 0] },
+                    { "captured" : false, "name" : "martyr", "color" : "white", "loc" : [2, 0] },
+                    { "captured" : false, "name" : "martyr", "color" : "white", "loc" : [5, 0] },
+                    { "captured" : false, "name" : "magician", "color" : "white", "loc" : [1, 0] },
+                    { "captured" : false, "name" : "magician", "color" : "white", "loc" : [6, 0] },
+                    { "captured" : false, "name" : "chariot", "color" : "white", "loc" : [0, 0] },
+                    { "captured" : false, "name" : "chariot", "color" : "white", "loc" : [7, 0] },
+    
+                    { "captured" : false, "name" : "king", "color" : "black", "loc" : [3, 7] },
+                    { "captured" : false, "name" : "vizir", "color" : "black", "loc" : [4, 7] },
+                    { "captured" : false, "name" : "martyr", "color" : "black", "loc" : [2, 7] },
+                    { "captured" : false, "name" : "martyr", "color" : "black", "loc" : [5, 7] },
+                    { "captured" : false, "name" : "magician", "color" : "black", "loc" : [1, 7] },
+                    { "captured" : false, "name" : "magician", "color" : "black", "loc" : [6, 7] },
+                    { "captured" : false, "name" : "chariot", "color" : "black", "loc" : [0, 7] },

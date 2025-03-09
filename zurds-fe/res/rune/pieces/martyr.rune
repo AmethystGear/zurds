@@ -7,6 +7,6 @@ fn martyr_moves(piece_id, state):
             martyr = move.state.pieces.[piece_id]
             martyr.captured = true
             for loc in diagonals().map(fn dir: martyr.loc + dir):
-                get_piece(loc, move.state).filter(fn piece: piece.name != 'king').map(fn piece: piece.captured = true)
+                get_piece(loc, move.state.pieces).filter(fn piece: piece.name != 'king').map(fn piece: piece.captured = true)
 
     return moves

@@ -7,15 +7,12 @@
     <script type="module">
         function to_pieces_map(pieces) {
             let i = 0
-            let pieces_map = {}
             for (let piece of pieces) {
-                let id = piece.name + '_' + i
-                piece['id'] = id
-                pieces_map[id] = piece
+                piece['id'] = i
                 piece['captured'] = false
                 i++
             }
-            return pieces_map
+            return pieces
         }
 
         const STARTING_BOARD = {
@@ -38,8 +35,10 @@
                 { 'name' : 'mercenary', 'color' : 'black', 'loc' : [5, 6] },
                 { 'name' : 'mercenary', 'color' : 'black', 'loc' : [6, 6] },
                 { 'name' : 'mercenary', 'color' : 'black', 'loc' : [7, 6] },
-
+                
                 { 'name' : 'king', 'color' : 'white', 'loc' : [3, 0] },
+
+                
                 { 'name' : 'vizir', 'color' : 'white', 'loc' : [4, 0] },
                 { 'name' : 'martyr', 'color' : 'white', 'loc' : [2, 0] },
                 { 'name' : 'martyr', 'color' : 'white', 'loc' : [5, 0] },
@@ -67,6 +66,11 @@
             push_board_state(board)
             console.log(get_moves())
         }
+        document.onkeypress = function (e) {
+            console.log('starting...')
+            console.log(get_moves())
+        } 
+
         run();
     </script>
 </body>

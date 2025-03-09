@@ -1,19 +1,19 @@
-fn add_loc(a, b):
-    return [a.[0] + b.[0], a.[1] + b.[1]]
+fn add_loc(@a, @b):
+    return [@a.[0] + @b.[0], @a.[1] + @b.[1]]
 
-fn sub_loc(a, b):
-    return [a.[0] - b.[0], a.[1] - b.[1]]
+fn sub_loc(@a, @b):
+    return [@a.[0] - @b.[0], @a.[1] - @b.[1]]
 
-fn chess_dist(a, b):
-    xdist = (a.[0] - b.[0]).abs()
-    ydist = (a.[1] - b.[1]).abs()
+fn chess_dist(@a, @b):
+    xdist = (@a.[0] - @b.[0]).abs()
+    ydist = (@a.[1] - @b.[1]).abs()
     return xdist.max(ydist)
 
-fn get_piece(loc, pieces):
-    return pieces.vals().filter(fn piece: piece.loc == loc).get(0)
+fn get_piece(@loc, @pieces):
+    return @pieces.filter(fn piece: @loc.[0] == piece.loc.[0] and @loc.[1] == piece.loc.[1]).get(0)
 
-fn is_valid_loc(loc):
-    return loc.[0] >= 0 and loc.[0] < 8 and loc.[1] >= 0 and loc.[1] < 8
+fn is_valid_loc(@loc):
+    return @loc.[0] >= 0 and @loc.[0] < 8 and @loc.[1] >= 0 and @loc.[1] < 8
 
 fn cardinals():
     return [[1, 0], [-1, 0], [0, 1], [0, -1]]
@@ -24,65 +24,61 @@ fn diagonals():
 fn knight_dirs():
     return [[2, -1], [2, 1], [-2, -1], [-2, 1], [1, 2], [-1, 2], [1, -2], [-1, -2]]
 
-fn create_move(piece_id, state, name, loc):
-    return {'piece_id' : piece_id, 'state' : state, 'name' : name, 'loc' : loc, 'cursed' : false}
+fn create_move(@piece_id, @state, @name, @loc):
+    return {'piece_id' : @piece_id, 'state' : @state, 'name' : @name, 'loc' : @loc, 'cursed' : false}
 
 fn get_displacement(piece, move):
     return sub_loc(move.state.pieces.[piece.id].loc, piece.loc)
 
-# given a piece id and all the locations we are allowed to move the piece
-# to, this generates all the possible moves. If a piece would be captured via displacement,
-# the move is named 'capture' otherwise, it is named 'move'. If allow_captures is false,
+# given @a piece id and all the locations we are allowed to move the piece
+# to, this generates all the possible moves. If @a piece would be captured via displacement,
+# the move is named 'capture' otherwise, it is named 'move'. If @allow_captures is false,
 # any moves that would capture are skipped.
-fn displacement_moves(piece_id, state, locs, allow_captures):
+fn displacement_moves(@piece_id, @state, @locs, @allow_captures):
     moves = []
-    for loc in locs:
-        move = state.copy()
-        piece = move.pieces.[piece_id]
-        if not is_valid_loc(loc):
+    for @loc in @locs:
+        move = @state.copy()
+        piece = move.pieces.[@piece_id]
+        if not is_valid_loc(@loc):
             continue
 
-        capture = get_piece(loc, move.pieces)
-        if capture.is_some():
-            capture.unwrap().captured = true
+        capture = get_piece(@loc, move.pieces).map(fn captured_piece: captured_piece.captured = true).is_some()
+        piece.loc = @loc
 
-
-        piece.loc = loc
-
-        if capture.is_some():
-            if not allow_captures:
+        if capture:
+            if not @allow_captures:
                 continue
 
-            name = 'capture'
+            @name = 'capture'
         else:
-            name = 'move'
+            @name = 'move'
         
-        moves.push(create_move(piece_id, move, name, loc))
+        moves.push(create_move(@piece_id, move, @name, @loc))
 
     return moves
 
-# given piece id, state of the board, directions we can move the piece in, the stop condition, 
+# given piece id, @state of the board, directions we can move the piece in, the stop condition, 
 # and whether to include the stop or not, this includes all the positions we could move the piece to.
-# the stop condition is a function that takes in the location and state of the board, and determines
-# whether the piece can continue moving in the direction or not. include_stop determines whether to include
-# the square where the stop_condition returned true.
-fn get_all_possible_locations_in_directions(piece_id, state, dirs, stop_condition, include_stop):
-    locs = []
-    starting_loc = state.pieces.[piece_id].loc
-    for dir in dirs:
-        loc = add_loc(starting_loc, dir)
+# the stop condition is @a function that takes in the location and @state of the board, and determines
+# whether the piece can continue moving in the direction or not. @include_stop determines whether to include
+# the square where the @stop_condition returned true.
+fn get_all_possible_locations_in_directions(@piece_id, @state, @dirs, @stop_condition, @include_stop):
+    @locs = []
+    starting_loc = @state.pieces.[@piece_id].loc
+    for dir in @dirs:
+        @loc = add_loc(starting_loc, dir)
         loop:
-            if not is_valid_loc(loc):
+            if not is_valid_loc(@loc):
                 break
             
-            stop = stop_condition(loc, state)
+            stop = @stop_condition(@loc, @state)
             if stop:
-                if include_stop:
-                    locs.push(loc)
+                if @include_stop:
+                    @locs.push(@loc)
 
                 break
 
-            locs.push(loc)
-            loc = add_loc(starting_loc, dir)
+            @locs.push(@loc)
+            @loc = add_loc(@loc, dir)
 
-    return locs
+    return @locs
