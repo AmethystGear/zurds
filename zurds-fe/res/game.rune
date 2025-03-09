@@ -2,17 +2,7 @@ fn king_moves(piece_id, state):
     king = state.pieces.[piece_id]
     dirs = cardinals() + diagonals()
     locs = dirs.map(fn dir: add_loc(king.loc, dir))
-
-    turn_moves = []
-    for loc in locs:
-        move = state.copy()
-        turn_piece = fn piece: piece.color = king.color
-        is_opponent_piece = fn piece: piece.color != king.color
-        opponent_piece_exists = get_piece(loc, move).filter(is_opponent_piece).map(turn_piece).is_some()
-        if opponent_piece_exists:
-            turn_moves.push(move)
-
-    return turn_moves + displacement_moves(piece_id, state, locs, true)
+    return displacement_moves(piece_id, state, locs, true)
 
 fn mercenary_moves(piece_id, state):
     merc = state.pieces.[piece_id]
@@ -24,7 +14,7 @@ fn mercenary_moves(piece_id, state):
     for move in moves:
         vertical = get_displacement(merc, move).[1]
         is_moving_backward = (merc.color == 'white' and vertical == -1) or (merc.color == 'black' and vertical == 1)
-        if not(is_moving_backward) or move.name == 'capture':
+        if not is_moving_backward or move.name == 'capture':
             legal_moves.push(move)
 
     return legal_moves
@@ -91,7 +81,7 @@ fn chariot_moves(piece_id, state):
         move = state.copy()
         capture = get_piece(loc, move.pieces).map(fn piece: piece.captured = true).is_some()
         if capture:
-            capture_moves.push(create_move(move, 'capture', loc))
+            capture_moves.push(create_move(piece_id, move, 'capture', loc))
 
     stop_condition = fn loc, state: get_piece(loc, state.pieces).is_some()
     locs = get_all_possible_locations_in_directions(piece_id, state, cardinals(), stop_condition, false)

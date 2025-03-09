@@ -1,0 +1,12 @@
+fn martyr_moves(piece_id, state):
+    stop_condition = fn loc state: get_piece(loc, state.pieces).is_some()
+    locs = get_all_possible_locations_in_directions(piece_id, state, diagonals(), stop_condition, true)
+    moves = displacement_moves(piece_id, state, locs, true)
+    for move in moves:
+        if move.name == 'capture':
+            martyr = move.state.pieces.[piece_id]
+            martyr.captured = true
+            for loc in diagonals().map(fn dir: martyr.loc + dir):
+                get_piece(loc, move.state).filter(fn piece: piece.name != 'king').map(fn piece: piece.captured = true)
+
+    return moves

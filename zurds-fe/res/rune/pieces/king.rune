@@ -1,0 +1,5 @@
+fn king_moves(piece_id, state):
+    king = state.pieces.[piece_id]
+    dirs = cardinals() + diagonals()
+    locs = dirs.map(fn dir: add_loc(king.loc, dir))
+    return displacement_moves(piece_id, state, locs, true)

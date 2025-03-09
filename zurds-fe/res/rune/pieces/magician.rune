@@ -1,0 +1,16 @@
+fn magician_moves(piece_id, state):
+    magician = state.pieces.[piece_id]
+    dirs = cardinals() + diagonals()
+    locs = dirs.map(fn dir: add_loc(magician.loc, dir))
+    one_square_moves = displacement_moves(piece_id, state, locs, true)
+
+    locs = []
+    for piece in state.pieces:
+        if piece.color == magician.color:
+            one_square_away = dirs.map(fn dir: add_loc(piece.loc, dir))
+            for loc in one_square_away:
+                if not locs.contains(loc):
+                    locs.push(loc)
+
+    teleport_moves = displacement_moves(piece_id, state, locs, false)
+    return teleport_moves + one_square_moves

@@ -1,0 +1,11 @@
+fn vizir_moves(piece_id, state):
+    vizir = state.pieces.[piece_id]
+    locs = knight_dirs().map(fn dir: add_loc(vizir.loc, dir))
+    knight_moves = displacement_moves(piece_id, state, locs, true)
+
+    queen_dirs = cardinals() + diagonals()
+    stop_condition = fn loc state: get_piece(loc, state.pieces).is_some()
+    locs = get_all_possible_locations_in_directions(piece_id, state, queen_dirs, stop_condition, true)
+    queen_moves = displacement_moves(piece_id, state, locs, true)
+    
+    return (knight_moves + queen_moves).filter(fn move: move.name == 'capture')

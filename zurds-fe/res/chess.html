@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta content="text/html;charset=utf-8" http-equiv="Content-Type" />
+</head>
+<body>
+    <script type="module">
+        function to_pieces_map(pieces) {
+            let i = 0
+            let pieces_map = {}
+            for (let piece of pieces) {
+                let id = piece.name + '_' + i
+                piece['id'] = id
+                pieces_map[id] = piece
+                piece['captured'] = false
+                i++
+            }
+            return pieces_map
+        }
+
+        const STARTING_BOARD = {
+            'turn' : 'white',
+            'pieces' : to_pieces_map([
+                { 'name' : 'mercenary', 'color' : 'white', 'loc' : [0, 1] },
+                { 'name' : 'mercenary', 'color' : 'white', 'loc' : [1, 1] },
+                { 'name' : 'mercenary', 'color' : 'white', 'loc' : [2, 1] },
+                { 'name' : 'mercenary', 'color' : 'white', 'loc' : [3, 1] },
+                { 'name' : 'mercenary', 'color' : 'white', 'loc' : [4, 1] },
+                { 'name' : 'mercenary', 'color' : 'white', 'loc' : [5, 1] },
+                { 'name' : 'mercenary', 'color' : 'white', 'loc' : [6, 1] },
+                { 'name' : 'mercenary', 'color' : 'white', 'loc' : [7, 1] },
+
+                { 'name' : 'mercenary', 'color' : 'black', 'loc' : [0, 6] },
+                { 'name' : 'mercenary', 'color' : 'black', 'loc' : [1, 6] },
+                { 'name' : 'mercenary', 'color' : 'black', 'loc' : [2, 6] },
+                { 'name' : 'mercenary', 'color' : 'black', 'loc' : [3, 6] },
+                { 'name' : 'mercenary', 'color' : 'black', 'loc' : [4, 6] },
+                { 'name' : 'mercenary', 'color' : 'black', 'loc' : [5, 6] },
+                { 'name' : 'mercenary', 'color' : 'black', 'loc' : [6, 6] },
+                { 'name' : 'mercenary', 'color' : 'black', 'loc' : [7, 6] },
+
+                { 'name' : 'king', 'color' : 'white', 'loc' : [3, 0] },
+                { 'name' : 'vizir', 'color' : 'white', 'loc' : [4, 0] },
+                { 'name' : 'martyr', 'color' : 'white', 'loc' : [2, 0] },
+                { 'name' : 'martyr', 'color' : 'white', 'loc' : [5, 0] },
+                { 'name' : 'magician', 'color' : 'white', 'loc' : [1, 0] },
+                { 'name' : 'magician', 'color' : 'white', 'loc' : [6, 0] },
+                { 'name' : 'chariot', 'color' : 'white', 'loc' : [0, 0] },
+                { 'name' : 'chariot', 'color' : 'white', 'loc' : [7, 0] },
+
+                { 'name' : 'king', 'color' : 'black', 'loc' : [3, 7] },
+                { 'name' : 'vizir', 'color' : 'black', 'loc' : [4, 7] },
+                { 'name' : 'martyr', 'color' : 'black', 'loc' : [2, 7] },
+                { 'name' : 'martyr', 'color' : 'black', 'loc' : [5, 7] },
+                { 'name' : 'magician', 'color' : 'black', 'loc' : [1, 7] },
+                { 'name' : 'magician', 'color' : 'black', 'loc' : [6, 7] },
+                { 'name' : 'chariot', 'color' : 'black', 'loc' : [0, 7] },
+                { 'name' : 'chariot', 'color' : 'black', 'loc' : [7, 7] },
+            ])
+        }
+        console.log(STARTING_BOARD)
+
+        import init, {push_board_state, bind_code, get_code, get_moves} from './zurds_fe.js';
+        async function run() {
+            await init();
+            let board = STARTING_BOARD
+            push_board_state(board)
+            console.log(get_moves())
+        }
+        run();
+    </script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+fn chariot_moves(piece_id, state):
+    chariot = state.pieces.[piece_id]
+    locs = knight_dirs().map(fn dir: add_loc(chariot.loc, dir))
+
+    capture_moves = []
+    for loc in locs:
+        move = state.copy()
+        capture = get_piece(loc, move.pieces).map(fn piece: piece.captured = true).is_some()
+        if capture:
+            capture_moves.push(create_move(piece_id, move, 'capture', loc))
+
+    stop_condition = fn loc state: get_piece(loc, state.pieces).is_some()
+    locs = get_all_possible_locations_in_directions(piece_id, state, cardinals(), stop_condition, false)
+    rook_moves = displacement_moves(piece_id, state, locs, false)
+    return rook_moves + capture_moves

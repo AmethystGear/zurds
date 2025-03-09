@@ -5,10 +5,12 @@ fn sub_loc(a, b):
     return [a.[0] - b.[0], a.[1] - b.[1]]
 
 fn chess_dist(a, b):
-    return (a.[0] - b.[0]).abs().max((a.[1] - b.[1]).abs())
+    xdist = (a.[0] - b.[0]).abs()
+    ydist = (a.[1] - b.[1]).abs()
+    return xdist.max(ydist)
 
 fn get_piece(loc, pieces):
-    return pieces.filter(fn piece: piece.loc == loc).get(0)
+    return pieces.vals().filter(fn piece: piece.loc == loc).get(0)
 
 fn is_valid_loc(loc):
     return loc.[0] >= 0 and loc.[0] < 8 and loc.[1] >= 0 and loc.[1] < 8
@@ -22,8 +24,8 @@ fn diagonals():
 fn knight_dirs():
     return [[2, -1], [2, 1], [-2, -1], [-2, 1], [1, 2], [-1, 2], [1, -2], [-1, -2]]
 
-fn create_move(state, name, loc):
-    return {'state' : state, 'name' : name, 'loc' : loc, 'cursed' : false}
+fn create_move(piece_id, state, name, loc):
+    return {'piece_id' : piece_id, 'state' : state, 'name' : name, 'loc' : loc, 'cursed' : false}
 
 fn get_displacement(piece, move):
     return sub_loc(move.state.pieces.[piece.id].loc, piece.loc)
@@ -40,10 +42,14 @@ fn displacement_moves(piece_id, state, locs, allow_captures):
         if not is_valid_loc(loc):
             continue
 
-        capture = get_piece(loc, move.pieces).map(fn piece: piece.captured = true).is_some()
+        capture = get_piece(loc, move.pieces)
+        if capture.is_some():
+            capture.unwrap().captured = true
+
+
         piece.loc = loc
 
-        if capture:
+        if capture.is_some():
             if not allow_captures:
                 continue
 
@@ -51,7 +57,7 @@ fn displacement_moves(piece_id, state, locs, allow_captures):
         else:
             name = 'move'
         
-        move.push(create_move(move, name, loc))
+        moves.push(create_move(piece_id, move, name, loc))
 
     return moves
 
@@ -65,9 +71,11 @@ fn get_all_possible_locations_in_directions(piece_id, state, dirs, stop_conditio
     starting_loc = state.pieces.[piece_id].loc
     for dir in dirs:
         loc = add_loc(starting_loc, dir)
-        while is_valid_loc(loc):
+        loop:
+            if not is_valid_loc(loc):
+                break
+            
             stop = stop_condition(loc, state)
-
             if stop:
                 if include_stop:
                     locs.push(loc)
